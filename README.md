@@ -15,6 +15,9 @@ These changes include:
 
 Saves are not affected by this mod.
 
+![Unmodded](/image-unmodded.jpg)  
+![Modded](/image-modded.jpg)
+
 ## Pre-requisites
 
 - Python 3.10 or newer
