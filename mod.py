@@ -358,7 +358,7 @@ def install(root, folder, scale):
     print(f'Installed: dialogue size 26 -> {26 * scale:g} ({scale:.0%} of original).')
     print(f'Also enlarged {len(report["ui_text_changes"])} labels and text fields in dialogue, text log and evidence.')
     print(f'Validated {report["verified_objects"]} objects; {report["modified_objects"]} UI objects patched.')
-    print('Launch the game normally. Original files are backed up in DialogueTextMod/backup.')
+    print('Launch the game normally. Original files are backed up in TyrionCuthbertLargerTextMod/backup.')
 
 
 def uninstall(root, folder):
@@ -384,7 +384,7 @@ def main():
     if not math.isfinite(args.scale) or not 1.1 <= args.scale <= 2.0:
         parser.error('--scale must be between 1.1 and 2.0')
     root = args.game_dir.resolve()
-    folder = root / 'DialogueTextMod'
+    folder = root / 'TyrionCuthbertLargerTextMod'
     if args.action == 'status':
         state = load_state(folder)
         if state is None:

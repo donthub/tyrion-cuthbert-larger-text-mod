@@ -21,7 +21,7 @@ fi
 scale="${1:-1.5}"
 python3 -c 'import math, sys; s = float(sys.argv[1]); sys.exit(0 if math.isfinite(s) and 1.1 <= s <= 2.0 else "Scale must be between 1.1 and 2.0")' "$scale"
 if [[ ! -f "$script_dir/../Tyrion1_Data/StreamingAssets/aa/catalog.bin" ]]; then
-    printf 'Place DialogueTextMod directly inside the game installation folder first.\n' >&2
+    printf 'Place TyrionCuthbertLargerTextMod directly inside the game installation folder first.\n' >&2
     exit 1
 fi
 

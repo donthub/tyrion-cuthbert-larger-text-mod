@@ -55,7 +55,7 @@ def main():
     script = HERE / 'mod.py'
     if args.action == 'install':
         if not (HERE.parent / 'Tyrion1_Data/StreamingAssets/aa/catalog.bin').is_file():
-            parser.error('Place DialogueTextMod directly inside the game installation folder.')
+            parser.error('Place TyrionCuthbertLargerTextMod directly inside the game installation folder.')
         if not args.setup_only:
             # Check the running game and any existing backup before downloading.
             sys.path.insert(0, str(HERE))
