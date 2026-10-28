@@ -101,12 +101,31 @@ def expand_ui(assets, scale, modified, opacity=DIALOGUE_BACKGROUND_OPACITY):
     def rect(p):
         return change(transforms[paths[p]])
 
-    def component(p, field):
+    def component_id(p, field):
         matches = [c['component']['m_PathID'] for c in data[paths[p]]['m_Component']
                    if field in data.get(c['component']['m_PathID'], {})]
         if len(matches) != 1:
             raise RuntimeError(f'Expected one {field} component at {p}.')
-        return change(matches[0])
+        return matches[0]
+
+    def component(p, field):
+        return change(component_id(p, field))
+
+    def add_component(p, template, field):
+        # Reuse an inspected component type and script reference. Allocate stable
+        # IDs from the original inventory so repeated installation is identical.
+        source = component_id(template, field)
+        i = 1
+        while i in assets.objects:
+            i += 1
+        obj = copy.copy(assets.objects[source])
+        obj.path_id = i
+        obj.data = assets.objects[source].get_raw_data()
+        assets.objects[i] = obj
+        modified[i] = copy.deepcopy(data[source])
+        modified[i]['m_GameObject']['m_PathID'] = paths[p]
+        change(paths[p])['m_Component'].append({'component': {'m_FileID': 0, 'm_PathID': i}})
+        return modified[i]
 
     text_changes = []
 
@@ -193,6 +212,66 @@ def expand_ui(assets, scale, modified, opacity=DIALOGUE_BACKGROUND_OPACITY):
     # Long descriptions retain the original lower auto-size bound to fit the
     # complete entry. Shorter descriptions use the increased maximum size.
     text('Item Menu/Container/Right/Container/Description', keep_minimum=True)
+
+    # Both obtained and updated evidence use this popup, with the controller
+    # replacing the localized heading. Use a fixed-size icon beside a vertical
+    # text column: item name, description, then any visible metadata rows.
+    popup = 'Add Item Popup/Window'
+    panel = rect(popup)
+    panel['m_AnchorMin']['x'] = 0.075
+    panel['m_AnchorMax']['x'] = 0.925
+    header = popup + '/Header'
+    text(header)
+    heading = component(header, 'm_fontSize')
+    # The heading starts large. Allow long translations to fit the wider panel
+    # without shrinking below its original size or extending above the screen.
+    heading['m_enableAutoSizing'] = True
+    heading['m_fontSizeMin'] = heading['m_fontSize'] / scale
+    rect(header)['m_SizeDelta']['y'] = min(100.0 * scale, 175.0)
+    text_changes[-1]['auto_size'] = True
+
+    info = popup + '/Top/Item Info'
+    text(info + '/Item Name', keep_minimum=True)
+    rect(info + '/Item Name')['m_SizeDelta']['y'] *= scale
+    fields = info + '/Item Fields'
+    # Originally the fields occupy only 66% of the area beside the icon.
+    rect(fields)['m_AnchorMax']['x'] = 1.0
+    for suffix in ('', ' (1)', ' (2)', ' (3)', ' (4)'):
+        row = fields + '/Item Field' + suffix
+        rect(row)['m_SizeDelta']['y'] *= scale
+        for label in ('Item Field Names', 'Item Field Values'):
+            text(row + '/' + label, keep_minimum=True)
+    description = popup + '/Description'
+    text(description)
+    fitter = component(description, 'm_VerticalFit')
+    if fitter['m_VerticalFit'] != 2:
+        raise RuntimeError('Evidence popup must retain preferred-height fitting.')
+    # The parent now uses TMP's preferred height directly; a second height
+    # controller on the description would fight the layout group.
+    fitter['m_Enabled'] = 0
+    description_id = transforms[paths[description]]
+    children = rect(popup)['m_Children']
+    children.remove({'m_FileID': 0, 'm_PathID': description_id})
+    rect(info)['m_Children'].insert(1, {'m_FileID': 0, 'm_PathID': description_id})
+    rect(description)['m_Father']['m_PathID'] = transforms[paths[info]]
+    rect(description)['m_Pivot']['y'] = 1.0
+
+    column = add_component(info, fields, 'm_Spacing')
+    column['m_Spacing'] = 15.0
+    column['m_ChildAlignment'] = 0
+    column['m_ChildControlHeight'] = 1
+    row = add_component(popup + '/Top', 'Dialogue Box/Container/Buttons', 'm_Spacing')
+    row['m_Spacing'] = 30.0
+    row['m_ChildAlignment'] = 0
+    row['m_ChildControlWidth'] = row['m_ChildControlHeight'] = 1
+    row['m_ChildForceExpandWidth'] = row['m_ChildForceExpandHeight'] = 0
+    icon = add_component(popup + '/Top/Icon', header, 'm_IgnoreLayout')
+    icon['m_IgnoreLayout'] = 0
+    icon['m_MinWidth'] = icon['m_PreferredWidth'] = 270.0
+    icon['m_MinHeight'] = icon['m_PreferredHeight'] = 270.0
+    icon['m_FlexibleWidth'] = icon['m_FlexibleHeight'] = 0.0
+    component(popup, 'm_Spacing')['m_ChildControlHeight'] = 1
+    component(popup, 'm_VerticalFit')['m_VerticalFit'] = 2
     return text_changes
 
 
@@ -217,7 +296,6 @@ def build(original, catalog, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
     assets = env.assets[0]
     if assets.unity_version != '6000.5.8f1':
         raise RuntimeError('Unrecognized Unity version; refusing to patch.')
-    raw_assets = bytearray(assets.reader.bytes)
     originals = {i: o.get_raw_data() for i, o in assets.objects.items()}
     modified = {}
     changes = []
@@ -265,22 +343,16 @@ def build(original, catalog, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
     # Write each staged object once, even when multiple layout adjustments touch it.
     for i, data in modified.items():
         obj = assets.objects[i]
-        old = originals[i]
-        new = obj.save_typetree(data)
-        if len(old) != len(new):
-            raise RuntimeError('Object size changed unexpectedly.')
-        offset = obj.byte_start
-        if raw_assets[offset:offset + len(old)] != old:
-            raise RuntimeError('Asset offset validation failed.')
-        raw_assets[offset:offset + len(old)] = new
-    # Preserve the serialized file byte-for-byte except the intended UI objects.
-    replacement = EndianBinaryReader(bytes(raw_assets))
+        obj.save_typetree(data)
+    # Reparenting the description and adding layout components changes object
+    # lengths. Rebuild offsets, then verify every untouched object's raw bytes.
+    replacement = EndianBinaryReader(assets.save())
     replacement.flags = assets.flags
     bundle.files[assets.name] = replacement
     patched = bundle.save(packer='lz4')
     check = UnityPy.load(patched)
     after = check.assets[0]
-    if set(after.objects) != set(originals):
+    if set(after.objects) != set(assets.objects):
         raise RuntimeError('Asset object inventory changed.')
     for i, obj in after.objects.items():
         if i in modified:
@@ -305,9 +377,9 @@ def build(original, catalog, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
     patched_catalog = catalog[:offset] + struct.pack('<I', new_crc) + catalog[offset + 4:]
     # The local catalog hash is a cache version token. Change it with the catalog.
     hash_token = hashlib.md5(patched_catalog).hexdigest().encode('ascii')
-    report = {'revision': 9, 'scale': scale, 'opacity': opacity,
+    report = {'revision': 11, 'scale': scale, 'opacity': opacity,
               'changes': changes, 'ui_text_changes': ui_changes,
-              'verified_objects': len(originals),
+              'verified_objects': len(after.objects), 'added_objects': len(after.objects) - len(originals),
               'modified_objects': len(modified), 'original_crc': old_crc, 'patched_crc': new_crc,
               'catalog_crc_offset': offset}
     return patched, patched_catalog, hash_token, report

@@ -14,6 +14,7 @@ These changes include:
 - Dialogue box secondary descriptions
 - Text log text size
 - Description texts in evidence panels
+- Text in the “Obtained evidence!” and “Evidence updated!” notifications, with a wider panel and the description directly below the item name beside the picture. Detail fields follow the description, and the panel height adjusts to the content.
 
 Saves are not affected by this mod.
 

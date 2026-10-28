@@ -14,11 +14,109 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import mod
 
 
+def validate_evidence_popup(assets, original_assets, scale):
+    """Check the serialized shared notification and its layout at each scale."""
+    prefab = 'Assets/Prefabs/GUI/Loaded GUIs/Add Item Popup.prefab'
+    go = assets.container[prefab].read_typetree()
+
+    def component(game_object, field):
+        return next((c['component']['m_PathID'], data)
+                    for c in game_object['m_Component']
+                    if field in (data := assets.objects[c['component']['m_PathID']].read_typetree()))
+
+    def rect_of(data):
+        owner = assets.objects[data['m_GameObject']['m_PathID']].read_typetree()
+        return component(owner, 'm_AnchorMin')[1]
+
+    def parent(rect):
+        return assets.objects[rect['m_Father']['m_PathID']].read_typetree()
+
+    controller_id, controller = component(go, 'itemDisplay')
+    # Both message variants, localization and display references must survive.
+    assert assets.objects[controller_id].get_raw_data() == original_assets.objects[controller_id].get_raw_data()
+    assert controller['itemUnlockHeader'] == 'OBTAINED EVIDENCE!'
+    assert controller['itemUpdateHeader'] == 'EVIDENCE UPDATED!'
+    display = controller['itemDisplay']
+    text_ids = [controller['header']['m_PathID'], display['itemName']['m_PathID'],
+                display['itemDescription']['m_PathID']]
+    for field in display['fieldDisplays']:
+        text_ids.extend(field[key]['m_PathID'] for key in ('fieldName', 'fieldValue'))
+    for i in text_ids:
+        before = original_assets.objects[i].read_typetree()
+        after = assets.objects[i].read_typetree()
+        size = before['m_fontSizeMax'] if before['m_enableAutoSizing'] else before['m_fontSize']
+        assert after['m_fontSizeMax'] == mod.float32_tree(size * scale)
+        assert after['m_text'] == before['m_text']
+
+    name = assets.objects[display['itemName']['m_PathID']].read_typetree()
+    name_rect = rect_of(name)
+    info = parent(name_rect)
+    top = parent(info)
+    window = parent(top)
+    assert window['m_AnchorMin']['x'] == mod.float32_tree(0.075)
+    assert window['m_AnchorMax']['x'] == mod.float32_tree(0.925)
+    def owner(rect):
+        return assets.objects[rect['m_GameObject']['m_PathID']].read_typetree()
+
+    # Unity computes the two columns and their heights at runtime. The icon
+    # keeps a fixed 270-unit box and a 30-unit gap before the text column.
+    horizontal = component(owner(top), 'm_Spacing')[1]
+    assert horizontal['m_Spacing'] == 30.0
+    assert horizontal['m_ChildControlWidth'] == horizontal['m_ChildControlHeight'] == 1
+    assert horizontal['m_ChildForceExpandWidth'] == horizontal['m_ChildForceExpandHeight'] == 0
+    icon_id = display['itemIcon']['m_PathID']
+    icon = assets.objects[icon_id].read_typetree()
+    icon_rect = rect_of(icon)
+    assert icon_rect['m_SizeDelta'] == {'x': 270.0, 'y': 270.0}
+    assert assets.objects[icon_id].get_raw_data() == original_assets.objects[icon_id].get_raw_data()
+    icon_layout = component(owner(icon_rect), 'm_IgnoreLayout')[1]
+    assert not icon_layout['m_IgnoreLayout']
+    for axis in ('Width', 'Height'):
+        assert icon_layout['m_Min' + axis] == icon_layout['m_Preferred' + axis] == 270.0
+        assert icon_layout['m_Flexible' + axis] == 0.0
+    for field in display['fieldDisplays']:
+        field_text = assets.objects[field['fieldName']['m_PathID']].read_typetree()
+        row = parent(rect_of(field_text))
+        fields = parent(row)
+        assert fields['m_AnchorMax']['x'] == 1.0
+        assert row['m_SizeDelta']['y'] == mod.float32_tree(45.0 * scale)
+    header = assets.objects[controller['header']['m_PathID']].read_typetree()
+    assert header['m_enableAutoSizing']
+    assert rect_of(header)['m_SizeDelta']['y'] < (1 - window['m_AnchorMax']['y']) * 1080
+    description = assets.objects[display['itemDescription']['m_PathID']].read_typetree()
+    description_rect = rect_of(description)
+    assert parent(description_rect) == info
+    children = [assets.objects[p['m_PathID']].read_typetree() for p in info['m_Children']]
+    assert children == [name_rect, description_rect, fields]
+    assert description_rect not in [assets.objects[p['m_PathID']].read_typetree()
+                                    for p in window['m_Children']]
+    # Each parent uses preferred heights, so descriptions wrap and push visible
+    # metadata down; hidden field rows no longer leave a fixed empty region.
+    for container in (info, window):
+        layout = component(owner(container), 'm_Spacing')[1]
+        assert layout['m_ChildControlHeight'] == 1
+        assert layout['m_ChildForceExpandHeight'] == 0
+    assert component(owner(window), 'm_VerticalFit')[1]['m_VerticalFit'] == 2
+    assert not component(owner(description_rect), 'm_VerticalFit')[1]['m_Enabled']
+    # Check both sides of every changed hierarchy/component link, including
+    # added layout components, rather than accepting orphaned serialized data.
+    for transform in (window, top, info, icon_rect, description_rect):
+        game_object = owner(transform)
+        for link in game_object['m_Component']:
+            data = assets.objects[link['component']['m_PathID']].read_typetree()
+            assert data['m_GameObject'] == transform['m_GameObject']
+        for link in transform['m_Children']:
+            child = assets.objects[link['m_PathID']].read_typetree()
+            assert parent(child) == transform
+
+
 def validate(game):
     source_folder = game / 'TyrionCuthbertLargerTextMod'
     state, originals, previous_state = mod.prepare_install(game, source_folder)
     paths = [Path(item['path']) for item in state['files']]
     source_hashes = [mod.digest((game / p).read_bytes()) for p in paths]
+    import UnityPy
+    original_assets = UnityPy.load(originals[0]).assets[0]
     reports = []
     with tempfile.TemporaryDirectory(prefix='tyrion-mod-validation-') as temporary:
         root = Path(temporary)
@@ -41,8 +139,10 @@ def validate(game):
             installed = mod.load_state(folder)
             report = installed['report']
             assert report['opacity'] == opacity
-            import UnityPy
-            assets = UnityPy.load(str(root / paths[0])).assets[0]
+            assert report['added_objects'] == 3
+            # Loading bytes avoids holding a Windows file handle across uninstall.
+            assets = UnityPy.load((root / paths[0]).read_bytes()).assets[0]
+            validate_evidence_popup(assets, original_assets, scale)
             # Check the actual serialized image alpha in both prefab containers.
             for prefab in mod.PREFABS:
                 go = assets.container[prefab].read_typetree()
@@ -61,7 +161,7 @@ def validate(game):
                              if 'm_Texture' in assets.objects[c['component']['m_PathID']].read_typetree())
                 assert image['m_Color']['a'] == mod.float32_tree(opacity)
             assert len(report['changes']) == 2
-            assert len(report['ui_text_changes']) == 13
+            assert len(report['ui_text_changes']) == 26
             for change in report['changes']:
                 assert change['font_size'] == round(26.0 * scale, 2)
             hashes = [mod.digest((root / p).read_bytes()) for p in paths]
