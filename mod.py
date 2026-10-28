@@ -80,7 +80,7 @@ def unpack_blocks(bundle, raw):
     return bundle.read_fs(reader)[1].bytes
 
 
-def expand_ui(assets, scale, modified):
+def expand_ui(assets, scale, modified, opacity=DIALOGUE_BACKGROUND_OPACITY):
     """Change the inspected prefab paths; retain layout fitters and localization."""
     data = {i: o.read_typetree() for i, o in assets.objects.items()
             if o.type.name in ('GameObject', 'RectTransform', 'Transform', 'MonoBehaviour')}
@@ -135,7 +135,7 @@ def expand_ui(assets, scale, modified):
     for root in ('Dialogue Box', 'Narrator Box Variant'):
         base = root + '/Container'
         # Tint only the background image; child text and controls keep their alpha.
-        component(base, 'm_Texture')['m_Color']['a'] = DIALOGUE_BACKGROUND_OPACITY
+        component(base, 'm_Texture')['m_Color']['a'] = opacity
         panel_height = rect(base)['m_SizeDelta']['y']
         # The nameplate background is baked into the panel texture. Match its
         # vertical stretch and keep the original horizontal bounds on the artwork.
@@ -207,7 +207,7 @@ def float32_tree(value):
     return value
 
 
-def build(original, catalog, scale):
+def build(original, catalog, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
     import UnityPy
     from UnityPy.streams import EndianBinaryReader
     if UnityPy.__version__ != '1.25.4':
@@ -261,7 +261,7 @@ def build(original, catalog, scale):
         changes.append({'prefab': prefab, 'original_size': 26, 'font_size': text['size'],
                         'text_height': height, 'panel_height': panel['m_SizeDelta']['y']})
 
-    ui_changes = expand_ui(assets, scale, modified)
+    ui_changes = expand_ui(assets, scale, modified, opacity)
     # Write each staged object once, even when multiple layout adjustments touch it.
     for i, data in modified.items():
         obj = assets.objects[i]
@@ -305,7 +305,8 @@ def build(original, catalog, scale):
     patched_catalog = catalog[:offset] + struct.pack('<I', new_crc) + catalog[offset + 4:]
     # The local catalog hash is a cache version token. Change it with the catalog.
     hash_token = hashlib.md5(patched_catalog).hexdigest().encode('ascii')
-    report = {'revision': 8, 'scale': scale, 'changes': changes, 'ui_text_changes': ui_changes,
+    report = {'revision': 9, 'scale': scale, 'opacity': opacity,
+              'changes': changes, 'ui_text_changes': ui_changes,
               'verified_objects': len(originals),
               'modified_objects': len(modified), 'original_crc': old_crc, 'patched_crc': new_crc,
               'catalog_crc_offset': offset}
@@ -372,9 +373,11 @@ def prepare_install(root, folder):
     return state, originals, previous_state
 
 
-def install(root, folder, scale):
+def install(root, folder, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
+    if not math.isfinite(opacity) or not 0.0 <= opacity <= 1.0:
+        raise ValueError('--opacity must be between 0.0 and 1.0')
     state, originals, previous_state = prepare_install(root, folder)
-    bundle, catalog, token, report = build(originals[0], originals[1], scale)
+    bundle, catalog, token, report = build(originals[0], originals[1], scale, opacity)
     outputs = [bundle, catalog, token]
     previous = [(root / item['path']).read_bytes() for item in state['files']]
     # Build and validate first. Only then persist the new backup and state.
@@ -404,6 +407,7 @@ def install(root, folder, scale):
         atomic_write(folder / 'state.json', json.dumps(old_state, indent=2).encode())
         raise
     print(f'Installed: dialogue size 26 -> {26 * scale:g} ({scale:.0%} of original).')
+    print(f'Dialogue box background opacity: {opacity:g} (0 = transparent, 1 = opaque).')
     print(f'Also enlarged {len(report["ui_text_changes"])} labels and text fields in dialogue, text log and evidence.')
     print(f'Validated {report["verified_objects"]} objects; {report["modified_objects"]} UI objects patched.')
     print('Launch the game normally. Original files are backed up in TyrionCuthbertLargerTextMod/backup.')
@@ -427,10 +431,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['install', 'uninstall', 'status'])
     parser.add_argument('--scale', type=float, default=1.5)
+    parser.add_argument('--opacity', type=float, default=DIALOGUE_BACKGROUND_OPACITY,
+                        help='Dialogue/narrator background opacity: 0 (transparent) to 1 (opaque); default: 0.99.')
     parser.add_argument('--game-dir', type=Path, default=HERE.parent)
     args = parser.parse_args()
     if not math.isfinite(args.scale) or not 1.1 <= args.scale <= 2.0:
         parser.error('--scale must be between 1.1 and 2.0')
+    if not math.isfinite(args.opacity) or not 0.0 <= args.opacity <= 1.0:
+        parser.error('--opacity must be between 0.0 and 1.0')
     root = args.game_dir.resolve()
     folder = root / 'TyrionCuthbertLargerTextMod'
     if args.action == 'status':
@@ -444,12 +452,13 @@ def main():
                 print('Original files active (mod uninstalled).')
             elif all(h == i.get('installed_sha256') for h, i in zip(current, state['files'])):
                 print('Mod installed. Scale:', state['report']['scale'])
+                print('Dialogue box background opacity:', state['report'].get('opacity', 'not recorded'))
             else:
                 raise RuntimeError('Partial installation: run the uninstall script to restore originals.')
     else:
         game_closed()
         if args.action == 'install':
-            install(root, folder, args.scale)
+            install(root, folder, args.scale, args.opacity)
         else:
             uninstall(root, folder)
 

@@ -3,11 +3,11 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    printf 'Usage: bash Install.sh [scale]\nDefault: 1.5 (50%% larger); range: 1.1 to 2.0.\n'
+    printf 'Usage: bash Install.sh [scale] [opacity]\nScale: default 1.5 (50%% larger); range 1.1 to 2.0.\nOpacity: default 0.99; range 0 (transparent) to 1 (opaque).\n'
     exit 0
 fi
-if (( $# > 1 )); then
-    printf 'Usage: bash Install.sh [scale]\n' >&2
+if (( $# > 2 )); then
+    printf 'Usage: bash Install.sh [scale] [opacity]\n' >&2
     exit 2
 fi
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -19,7 +19,9 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 scale="${1:-1.5}"
+opacity="${2:-0.99}"
 python3 -c 'import math, sys; s = float(sys.argv[1]); sys.exit(0 if math.isfinite(s) and 1.1 <= s <= 2.0 else "Scale must be between 1.1 and 2.0")' "$scale"
+python3 -c 'import math, sys; o = float(sys.argv[1]); sys.exit(0 if math.isfinite(o) and 0.0 <= o <= 1.0 else "Opacity must be between 0.0 and 1.0")' "$opacity"
 if [[ ! -f "$script_dir/../Tyrion1_Data/StreamingAssets/aa/catalog.bin" ]]; then
     printf 'Place TyrionCuthbertLargerTextMod directly inside the game installation folder first.\n' >&2
     exit 1
@@ -48,5 +50,5 @@ if ! "$venv_python" -c 'import UnityPy; assert UnityPy.__version__ == "1.25.4"' 
     "$venv_python" -m pip install --disable-pip-version-check 'UnityPy==1.25.4'
 fi
 
-"$venv_python" "$script_dir/mod.py" install --scale "$scale"
+"$venv_python" "$script_dir/mod.py" install --scale "$scale" --opacity "$opacity"
 printf '\nDone. Launch the game through Steam as usual.\n'

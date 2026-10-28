@@ -30,9 +30,12 @@ Saves are not affected by this mod.
 - Download the Windows `.zip` or Linux / Steam Deck `.tar.gz` archive from [Releases](https://github.com/donthub/tyrion-cuthbert-larger-text-mod/releases) and extract it.
 - Copy `TyrionCuthbertLargerTextMod` folder into the game folder. Game folder can be found by game > right click > Manage > Browse local files in Steam.
 - Run `Install.bat` / `Install.sh` for the default 50% increase.
-- To choose a different increase on Windows, run `Install.bat 1.3` / `Install.sh 1.3` (30% larger). Supported scale range: 1.1 through 2.0.
+- To choose a different increase, run `Install.bat 1.3` / `Install.sh 1.3` (30% larger). Supported scale range: 1.1 through 2.0.
+- To also set dialogue box opacity, run `Install.bat 1.3 0.8` / `Install.sh 1.3 0.8` (30% larger, 80% opacity). Opacity ranges from 0 (transparent) to 1 (opaque), with a default of 0.99. This affects the dialogue and narrator backgrounds; text and controls retain their opacity. To change opacity with the default scale, use `Install.bat 1.5 0.8` / `Install.sh 1.5 0.8`.
 - Run `Uninstall.bat` / `Uninstall.sh` to restore the original files.
 - Run `python mod.py status` / `python3 mod.py status` to check the installation.
+
+When invoking Python directly in an environment with UnityPy installed, use `python mod.py install --scale 1.3 --opacity 0.8` (or `python3` on Linux). Both options are optional and use their defaults when omitted. Re-run the installer with your desired scale and opacity to adjust an existing installation.
 
 Every adjustment is calculated from the original backup, so repeated installation never compounds the increase. Run the installer again to upgrade an older version of this mod; keep the existing backup and `state.json`. Larger settings take up more screen space. Dialogue choices and unrelated menus keep their existing text size. Extremely long lines and all languages/resolutions have not been visually tested; try a smaller scale if text exceeds its panel.
 
@@ -52,7 +55,7 @@ Automatic migration refuses unknown or partially updated files and changes from 
 
 The installer reparses the rebuilt bundle, checks all objects and unchanged resource streams, and checks the installed hashes. Install, adjustment, repeat installation, and byte-exact uninstall are also exercised on an isolated copy.
 
-Run the backup/update regression tests with `python -m unittest discover -s tests -v`. To validate local game assets without modifying the installation, run `python tests/validate_game.py --game-dir "path/to/game"` using a Python environment containing UnityPy 1.25.4. This checks migration when existing mod state is present, repeat installation, scales 1.1/1.3/1.5/2.0, and exact restoration. In-game visual validation of the updated build is still needed.
+Run the regression tests with `python -m unittest discover -s tests -v`. To validate local game assets without modifying the installation, run `python tests/validate_game.py --game-dir "path/to/game"` using a Python environment containing UnityPy 1.25.4. This checks migration when existing mod state is present, repeat installation, scales 1.1/1.3/1.5/2.0, background opacities 0/0.8/0.99/1, and exact restoration. In-game visual validation of the updated build is still needed.
 
 ## Publishing a release
 

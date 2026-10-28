@@ -1,4 +1,6 @@
 """Backup migration and failure recovery tests; no game assets required."""
+import contextlib
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -6,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 import mod
+import windows_setup
 
 
 class UpdateTests(unittest.TestCase):
@@ -58,7 +61,7 @@ class UpdateTests(unittest.TestCase):
             self.assertEqual(self.files()[path], self.snapshot[path])
         for scale in (1.5, 1.3):
             mod.install(self.root, self.folder, scale)
-            self.build.assert_called_with(self.clean[0], self.clean[1], scale)
+            self.build.assert_called_with(self.clean[0], self.clean[1], scale, 0.99)
         mod.uninstall(self.root, self.folder)
         self.assertEqual([(self.root / p).read_bytes() for p in self.paths], self.clean)
 
@@ -72,6 +75,22 @@ class UpdateTests(unittest.TestCase):
                     mod.install(self.root, self.folder, 1.5)
                 self.assertEqual(self.files(), before)
                 mod.atomic_write(path, self.clean[index])
+        self.build.assert_not_called()
+
+    def test_opacity_adjustment_uses_original_backups(self):
+        for opacity in (0.0, 0.8, 1.0, 0.99):
+            with self.subTest(opacity=opacity):
+                mod.install(self.root, self.folder, 1.3, opacity)
+                self.build.assert_called_with(self.clean[0], self.clean[1], 1.3, opacity)
+        mod.uninstall(self.root, self.folder)
+        self.assertEqual([(self.root / p).read_bytes() for p in self.paths], self.clean)
+
+    def test_invalid_opacity_does_not_write(self):
+        for opacity in (-0.01, 1.01, float('nan'), float('inf'), -float('inf')):
+            with self.subTest(opacity=opacity):
+                with self.assertRaisesRegex(ValueError, '--opacity'):
+                    mod.install(self.root, self.folder, 1.5, opacity)
+                self.assertEqual(self.files(), self.snapshot)
         self.build.assert_not_called()
 
     def test_failed_build_preserves_all_files(self):
@@ -125,6 +144,43 @@ class UpdateTests(unittest.TestCase):
         mod.install(self.root, self.folder, 1.5)
         mod.uninstall(self.root, self.folder)
         self.assertEqual([(self.root / p).read_bytes() for p in self.paths], self.clean)
+
+
+class ArgumentTests(unittest.TestCase):
+    def test_opacity_cli_default_and_custom_values(self):
+        for options, expected in (([], 0.99), (['--opacity', '0'], 0.0),
+                                  (['--opacity', '0.8'], 0.8), (['--opacity', '1'], 1.0)):
+            with self.subTest(options=options), patch('sys.argv', ['mod.py', 'install', *options]), \
+                    patch.object(mod, 'game_closed'), patch.object(mod, 'install') as install:
+                mod.main()
+                self.assertEqual(install.call_args.args[2:], (1.5, expected))
+
+    def test_invalid_opacity_rejected_before_game_access_or_setup(self):
+        for entrypoint in (mod, windows_setup):
+            for value in ('-0.1', '1.1', 'nan', 'inf', '-inf', 'invalid'):
+                with self.subTest(entrypoint=entrypoint.__name__, value=value), \
+                        patch('sys.platform', 'win32'), \
+                        patch('sys.argv', ['script.py', 'install', '--opacity=' + value]), \
+                        patch.object(mod, 'game_closed') as closed, \
+                        patch.object(windows_setup, 'prepare_python') as setup, \
+                        contextlib.redirect_stderr(io.StringIO()) as error:
+                    with self.assertRaises(SystemExit) as exit_result:
+                        entrypoint.main()
+                    self.assertEqual(exit_result.exception.code, 2)
+                    self.assertIn('--opacity', error.getvalue())
+                    closed.assert_not_called()
+                    setup.assert_not_called()
+
+    def test_windows_forwards_opacity(self):
+        with patch('sys.platform', 'win32'), \
+                patch('sys.argv', ['windows_setup.py', 'install', '--opacity', '0.8']), \
+                patch.object(Path, 'is_file', return_value=True), \
+                patch.object(mod, 'game_closed'), patch.object(mod, 'prepare_install'), \
+                patch.object(windows_setup, 'prepare_python', return_value=Path('python.exe')), \
+                patch.object(windows_setup.subprocess, 'run') as run:
+            run.return_value.returncode = 0
+            self.assertEqual(windows_setup.main(), 0)
+            self.assertEqual(run.call_args.args[0][-4:], ['--scale', '1.5', '--opacity', '0.8'])
 
 
 if __name__ == '__main__':

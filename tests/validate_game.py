@@ -34,17 +34,39 @@ def validate(game):
                 shutil.copyfile(source_folder / backup, folder / backup)
 
         default_hashes = None
-        for scale in (1.5, 1.5, 1.3, 1.1, 2.0):
-            mod.install(root, folder, scale)
+        settings = ((1.5, 0.99), (1.5, 0.99), (1.3, 0.99), (1.1, 0.99), (2.0, 0.99),
+                    (1.5, 0.0), (1.5, 0.8), (1.5, 1.0), (1.5, 0.99))
+        for scale, opacity in settings:
+            mod.install(root, folder, scale, opacity)
             installed = mod.load_state(folder)
             report = installed['report']
+            assert report['opacity'] == opacity
+            import UnityPy
+            assets = UnityPy.load(str(root / paths[0])).assets[0]
+            # Check the actual serialized image alpha in both prefab containers.
+            for prefab in mod.PREFABS:
+                go = assets.container[prefab].read_typetree()
+                controller = next(assets.objects[c['component']['m_PathID']].read_typetree()
+                                  for c in go['m_Component']
+                                  if 'dialogueDisplay' in assets.objects[c['component']['m_PathID']].read_typetree())
+                text = assets.objects[controller['dialogueDisplay']['m_PathID']].read_typetree()
+                text_go = assets.objects[text['m_GameObject']['m_PathID']].read_typetree()
+                rect = next(assets.objects[c['component']['m_PathID']].read_typetree()
+                            for c in text_go['m_Component']
+                            if assets.objects[c['component']['m_PathID']].type.name == 'RectTransform')
+                panel = assets.objects[rect['m_Father']['m_PathID']].read_typetree()
+                panel_go = assets.objects[panel['m_GameObject']['m_PathID']].read_typetree()
+                image = next(assets.objects[c['component']['m_PathID']].read_typetree()
+                             for c in panel_go['m_Component']
+                             if 'm_Texture' in assets.objects[c['component']['m_PathID']].read_typetree())
+                assert image['m_Color']['a'] == mod.float32_tree(opacity)
             assert len(report['changes']) == 2
             assert len(report['ui_text_changes']) == 13
             for change in report['changes']:
                 assert change['font_size'] == round(26.0 * scale, 2)
             hashes = [mod.digest((root / p).read_bytes()) for p in paths]
             assert hashes == [i['installed_sha256'] for i in installed['files']]
-            if scale == 1.5:
+            if (scale, opacity) == (1.5, 0.99):
                 if default_hashes is not None:
                     assert hashes == default_hashes, 'Repeat install changed output'
                 default_hashes = hashes
@@ -60,7 +82,7 @@ def validate(game):
                 archives = list((folder / 'backup').glob('state-*.json'))
                 assert any(json.loads(p.read_text()) == previous_state for p in archives)
     assert [mod.digest((game / p).read_bytes()) for p in paths] == source_hashes
-    print('PASS: install, repeat, adjustment, scale limits, backup preservation, exact uninstall.')
+    print('PASS: install, repeat, adjustment, scale/opacity limits, backup preservation, exact uninstall.')
     print('Source game files unchanged.')
     return reports
 

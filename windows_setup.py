@@ -41,6 +41,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('install', 'uninstall', 'status'))
     parser.add_argument('--scale', type=float, default=1.5)
+    parser.add_argument('--opacity', type=float, default=0.99,
+                        help='Dialogue/narrator background opacity: 0 (transparent) to 1 (opaque); default: 0.99.')
     parser.add_argument('--setup-only', action='store_true',
                         help='Prepare dependencies without modifying game assets (install only).')
     args = parser.parse_args()
@@ -50,6 +52,8 @@ def main():
         parser.error('Python 3.10 or newer is required (64-bit).')
     if not math.isfinite(args.scale) or not 1.1 <= args.scale <= 2.0:
         parser.error('--scale must be between 1.1 and 2.0')
+    if not math.isfinite(args.opacity) or not 0.0 <= args.opacity <= 1.0:
+        parser.error('--opacity must be between 0.0 and 1.0')
     if args.setup_only and args.action != 'install':
         parser.error('--setup-only requires install')
     script = HERE / 'mod.py'
@@ -70,7 +74,7 @@ def main():
         # Uninstall/status only need the standard library, including offline use.
         python = Path(sys.executable)
     return subprocess.run([str(python), '-I', str(script), args.action,
-                           '--scale', str(args.scale)]).returncode
+                           '--scale', str(args.scale), '--opacity', str(args.opacity)]).returncode
 
 
 if __name__ == '__main__':
