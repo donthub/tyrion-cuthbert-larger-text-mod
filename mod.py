@@ -33,6 +33,8 @@ TOOLBAR_OFFSET_Y = 20.0 * 1080.0 / 1440.0
 DIALOGUE_BACKGROUND_OPACITY = 0.99
 # Leave 2.5% of the screen on each side of the normal dialogue panel.
 DIALOGUE_SIDE_MARGIN = 0.025
+# Retain the original gap between illustrations and the dialogue panel.
+IMAGE_DIALOGUE_GAP = 10.0
 # Clean files inspected in Steam build 25968594. Automatic backup migration is
 # restricted to this exact bundle/catalog/hash combination, not just its Unity
 # version: a partial update or another mod must never become our new baseline.
@@ -196,6 +198,32 @@ def expand_ui(assets, scale, modified, opacity=DIALOGUE_BACKGROUND_OPACITY):
                 r['m_AnchorMax']['x'] += (x + (1.0 - pivot) * width) / original_width
                 r['m_AnchoredPosition']['x'] = 0.0
                 r['m_SizeDelta']['x'] = 0.0
+
+    # Story illustrations (including building plans) share this prefab. Its
+    # HeightControlsWidth fitter preserves the runtime sprite's aspect ratio.
+    # Move only the bottom edge; keep the original 50-unit top inset and let
+    # the fitter shrink the width along with the available height.
+    image_path = 'Image Display/Image'
+    image = rect(image_path)
+    fitter = data[component_id(image_path, 'm_AspectMode')]
+    if (image['m_AnchorMin']['y'] != 0.0 or image['m_AnchorMax']['y'] != 1.0
+            or image['m_Pivot']['y'] != 0.5
+            or image['m_AnchoredPosition']['y'] != 125.0
+            or image['m_SizeDelta']['y'] != -350.0
+            or not fitter['m_Enabled'] or fitter['m_AspectMode'] != 2):
+        raise RuntimeError('Unexpected original story image layout.')
+    panel_tops = []
+    for root in ('Dialogue Box', 'Narrator Box Variant'):
+        panel = rect(root + '/Container')
+        if panel['m_AnchorMin']['y'] != 0.0 or panel['m_AnchorMax']['y'] != 0.0:
+            raise RuntimeError('Expected bottom-anchored dialogue panel.')
+        panel_tops.append(panel['m_AnchoredPosition']['y']
+                          + (1.0 - panel['m_Pivot']['y']) * panel['m_SizeDelta']['y'])
+    bottom = image['m_AnchoredPosition']['y'] - image['m_SizeDelta']['y'] / 2.0
+    adjustment = max(0.0, max(panel_tops) + IMAGE_DIALOGUE_GAP - bottom)
+    image['m_SizeDelta']['y'] -= adjustment
+    image['m_AnchoredPosition']['y'] += adjustment / 2.0
+
     entry = 'Text Log/Scroll View/Viewport/Content/Text Entry'
     for label in ('Char Name', 'Text', 'Text 2', 'Large Text'):
         text(entry + '/' + label)
@@ -388,7 +416,7 @@ def build(original, catalog, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
     patched_catalog = catalog[:offset] + struct.pack('<I', new_crc) + catalog[offset + 4:]
     # The local catalog hash is a cache version token. Change it with the catalog.
     hash_token = hashlib.md5(patched_catalog).hexdigest().encode('ascii')
-    report = {'revision': 13, 'scale': scale, 'opacity': opacity,
+    report = {'revision': 14, 'scale': scale, 'opacity': opacity,
               'changes': changes, 'ui_text_changes': ui_changes,
               'verified_objects': len(after.objects), 'added_objects': len(after.objects) - len(originals),
               'modified_objects': len(modified), 'original_crc': old_crc, 'patched_crc': new_crc,

@@ -12,6 +12,7 @@ These changes include:
 - Dialogue box opacity
 - Dialogue box text size
 - Dialogue box secondary descriptions
+- Gameplay popup images, including building plans, shrink proportionally to fit above the enlarged dialogue and narrator boxes.
 - Preserve dialogue and narration text when returning from Text log.
 - Text log text size
 - Description texts in evidence panels
@@ -44,6 +45,8 @@ Every adjustment is calculated from the original backup, so repeated installatio
 
 To apply the Text log fix to an existing installation, copy the updated `mod.py` into the installed mod folder and re-run the installer with your preferred scale and opacity. Keep `backup` and `state.json`.
 
+The same update procedure applies the popup image fix. Images keep their original top margin and aspect ratio, with their lower edge placed just above the larger of the dialogue and narrator panels. The image viewer inside the evidence menu keeps its existing layout.
+
 ## Backups and game updates
 
 Original files are kept in `TyrionCuthbertLargerTextMod/backup`, with SHA-256 hashes in `state.json`. Keep this folder to remove the mod. The Windows installer manages `.mod-tools/windows-py...`; the Linux installer manages `.venv-linux`. Older Windows installations may also have `.mod-tools/python`, which remains supported for direct `mod.py` invocation outside a virtual environment. Windows binaries are ignored on Linux.
@@ -61,6 +64,8 @@ Automatic migration refuses unknown or partially updated files and changes from 
 `mod.py` is the editable source. It uses [UnityPy 1.25.4](https://github.com/K0lb3/UnityPy), provisioned by the platform installer. The actual dialogue renderer is [Super Text Mesh](https://kaiclavier.com/docs/SuperTextMesh.html); TextMesh Pro is used elsewhere in the interface. Unity validates bundles using a CRC of their [uncompressed contents](https://docs.unity3d.com/ScriptReference/AssetBundle.LoadFromMemory.html).
 
 The installer reparses the rebuilt bundle, checks all objects and unchanged resource streams, and checks the installed hashes. Install, adjustment, repeat installation, and byte-exact uninstall are also exercised on an isolated copy.
+
+Popup image validation checks clearance above both dialogue panels at each tested scale, the unchanged top margin and aspect-ratio fitter, and preservation of the evidence menu's separate image viewer. In-game visual verification of building plans and other story illustrations is still needed.
 
 The Text log fix enables Super Text Mesh's [`rememberReadPosition`](https://kaiclavier.com/docs/SuperTextMesh.html#rememberReadPosition) on the dialogue and narrator renderers. This preserves their drawing position when disabled and re-enabled, while leaving the game's manual text playback, timing and events unchanged. Asset validation checks both prefabs at every tested scale and opacity. In-game verification is still needed: open and close Text log repeatedly on a completed line and during its reveal, then advance to the next line; repeat for narration. The previous text should return and subsequent lines should play normally.
 

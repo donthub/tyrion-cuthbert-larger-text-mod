@@ -14,6 +14,73 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import mod
 
 
+def validate_story_images(assets, original_assets):
+    """Check image clearance using serialized rectangles, not patch formulas."""
+    def component(game_object, field, source=assets):
+        return next((c['component']['m_PathID'], data)
+                    for c in game_object['m_Component']
+                    if field in (data := source.objects[c['component']['m_PathID']].read_typetree()))
+
+    def rect_of(data, source=assets):
+        owner = source.objects[data['m_GameObject']['m_PathID']].read_typetree()
+        return component(owner, 'm_AnchorMin', source)[1]
+
+    prefab = 'Assets/Prefabs/GUI/Loaded GUIs/Image Display.prefab'
+    go = assets.container[prefab].read_typetree()
+    controller_id, controller = component(go, 'imageModule')
+    image_id = controller['imageModule']['m_PathID']
+    image = assets.objects[image_id].read_typetree()
+    rect = rect_of(image)
+    original_rect = rect_of(original_assets.objects[image_id].read_typetree(), original_assets)
+    owner = assets.objects[rect['m_GameObject']['m_PathID']].read_typetree()
+    fitter_id, fitter = component(owner, 'm_AspectMode')
+    assert fitter['m_Enabled'] and fitter['m_AspectMode'] == 2
+    # Runtime image selection, fades, aspect ratio fitting and sorting survive.
+    for i in (controller_id, image_id, fitter_id):
+        assert assets.objects[i].get_raw_data() == original_assets.objects[i].get_raw_data()
+    assert rect['m_LocalScale'] == original_rect['m_LocalScale']
+    assert rect['m_AnchoredPosition']['x'] == original_rect['m_AnchoredPosition']['x']
+
+    panels = []
+    for prefab in mod.PREFABS:
+        dialogue = assets.container[prefab].read_typetree()
+        _, controller = component(dialogue, 'dialogueDisplay')
+        text_rect = rect_of(assets.objects[controller['dialogueDisplay']['m_PathID']].read_typetree())
+        panels.append(assets.objects[text_rect['m_Father']['m_PathID']].read_typetree())
+
+    def vertical_bounds(r, canvas_height):
+        height = (r['m_AnchorMax']['y'] - r['m_AnchorMin']['y']) * canvas_height + r['m_SizeDelta']['y']
+        pivot = r['m_Pivot']['y']
+        anchor = (r['m_AnchorMin']['y'] * (1 - pivot) + r['m_AnchorMax']['y'] * pivot) * canvas_height
+        bottom = anchor + r['m_AnchoredPosition']['y'] - pivot * height
+        return bottom, bottom + height
+
+    # Canvas units scale uniformly with display resolution. Exercise both the
+    # nominal canvas and a taller canvas, including Steam Deck's aspect ratio.
+    for canvas_height in (1080.0, 1200.0):
+        bottom, top = vertical_bounds(rect, canvas_height)
+        old_bottom, old_top = vertical_bounds(original_rect, canvas_height)
+        panel_top = max(vertical_bounds(p, canvas_height)[1] for p in panels)
+        assert abs(bottom - panel_top - mod.IMAGE_DIALOGUE_GAP) < 0.001
+        assert abs(top - old_top) < 0.001
+        assert 0 < top - bottom < old_top - old_bottom
+        assert top <= canvas_height
+    # The evidence menu has a separate, full-size illustration viewer.
+    menu = assets.container['Assets/Prefabs/GUI/Loaded GUIs/Item Menu.prefab'].read_typetree()
+    def check_viewer(game_object, in_viewer=False):
+        in_viewer = in_viewer or game_object['m_Name'] == 'Image Display'
+        for link in game_object['m_Component']:
+            i = link['component']['m_PathID']
+            obj = assets.objects[i]
+            if in_viewer:
+                assert obj.get_raw_data() == original_assets.objects[i].get_raw_data()
+            if obj.type.name == 'RectTransform':
+                for child in obj.read_typetree()['m_Children']:
+                    child_rect = assets.objects[child['m_PathID']].read_typetree()
+                    check_viewer(assets.objects[child_rect['m_GameObject']['m_PathID']].read_typetree(), in_viewer)
+    check_viewer(menu)
+
+
 def validate_evidence_popup(assets, original_assets, scale):
     """Check the serialized shared notification and its layout at each scale."""
     prefab = 'Assets/Prefabs/GUI/Loaded GUIs/Add Item Popup.prefab'
@@ -154,6 +221,7 @@ def validate(game):
             # Loading bytes avoids holding a Windows file handle across uninstall.
             assets = UnityPy.load((root / paths[0]).read_bytes()).assets[0]
             validate_evidence_popup(assets, original_assets, scale)
+            validate_story_images(assets, original_assets)
             # Check the actual serialized image alpha in both prefab containers.
             for prefab in mod.PREFABS:
                 go = assets.container[prefab].read_typetree()
@@ -201,7 +269,7 @@ def validate(game):
                 archives = list((folder / 'backup').glob('state-*.json'))
                 assert any(json.loads(p.read_text()) == previous_state for p in archives)
     assert [mod.digest((game / p).read_bytes()) for p in paths] == source_hashes
-    print('PASS: install, repeat, adjustment, scale/opacity limits, dialogue retention settings, '
+    print('PASS: install, repeat, adjustment, scale/opacity limits, story image clearance, dialogue retention settings, '
           'focus setting, backup preservation, exact uninstall.')
     print('Source game files unchanged.')
     return reports
