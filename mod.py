@@ -19,6 +19,12 @@ HERE = Path(__file__).resolve().parent
 if sys.platform == 'win32' and sys.prefix == sys.base_prefix:
     sys.path.insert(0, str(HERE.parent / '.mod-tools' / 'python'))
 AA = Path('Tyrion1_Data/StreamingAssets/aa')
+PLAYER_DATA = Path('Tyrion1_Data/data.unity3d')
+# Inspected Steam build 25968594. PlayerSettings has no embedded type tree;
+# pin both the container and object before changing its runInBackground byte.
+PLAYER_DATA_SHA256 = 'adf2c92b09edb41471cef1c93fd3d436615432690e2085ad690c7fc27edb7ec5'
+PLAYER_SETTINGS_SHA256 = '10b1c6bfd36503544bd3e73b9700c28650d12e396cdb3d8bb097c9a649ce596c'
+RUN_IN_BACKGROUND_OFFSET = 406
 PATTERN = 'defaultlocalgroup_assets_default_*.bundle'
 PREFABS = ('Assets/Prefabs/GUI/Dialogue Boxes/Dialogue Box.prefab',
            'Assets/Prefabs/GUI/Dialogue Boxes/Narrator Box Variant.prefab')
@@ -390,6 +396,60 @@ def load_state(folder):
     return json.loads(path.read_text()) if path.exists() else None
 
 
+def build_focus_patch(original):
+    """Disable background updates, preserving every other uncompressed byte."""
+    import UnityPy
+    from UnityPy.streams import EndianBinaryReader
+    if UnityPy.__version__ != '1.25.4':
+        raise RuntimeError('This patch requires UnityPy 1.25.4.')
+    if digest(original) != PLAYER_DATA_SHA256:
+        raise RuntimeError('Unrecognized player data; refusing to patch background input.')
+    env = UnityPy.load(original)
+    assets = next(a for a in env.assets if a.name == 'globalgamemanagers')
+    obj = assets.objects[1]
+    raw = obj.get_raw_data()
+    if (assets.unity_version != '6000.5.8f1' or obj.type.name != 'PlayerSettings'
+            or digest(raw) != PLAYER_SETTINGS_SHA256 or raw[RUN_IN_BACKGROUND_OFFSET] != 1):
+        raise RuntimeError('Unexpected PlayerSettings layout; refusing to patch.')
+    # UnityPy's fallback type tree omits four trailing bytes in this build.
+    # Change only the inspected boolean directly, retaining that unknown tail,
+    # all object offsets, metadata, and the other files in data.unity3d.
+    before = assets.reader.bytes
+    offset = obj.byte_start + RUN_IN_BACKGROUND_OFFSET
+    changed = before[:offset] + b'\x00' + before[offset + 1:]
+    # Avoid reserializing stripped assets with fallback type trees.
+    for name, item in list(env.file.files.items()):
+        content = item.reader.bytes if hasattr(item, 'reader') else item.bytes
+        replacement = EndianBinaryReader(changed if name == assets.name else content)
+        replacement.flags = item.flags
+        env.file.files[name] = replacement
+    patched = env.file.save(packer='lz4')
+    check = UnityPy.load(patched)
+    if set(env.file.files) != set(check.file.files):
+        raise RuntimeError('Player data file inventory changed.')
+    for name, item in check.file.files.items():
+        actual = item.reader.bytes if hasattr(item, 'reader') else item.bytes
+        source = env.file.files[name]
+        expected = source.reader.bytes if hasattr(source, 'reader') else source.bytes
+        if actual != expected:
+            raise RuntimeError('Player data verification failed: ' + name)
+    return patched
+
+
+def include_player_data(root, state, originals):
+    """Extend old three-file installations without replacing their backups."""
+    paths = [item['path'] for item in state['files']]
+    if PLAYER_DATA.as_posix() not in paths:
+        original = (root / PLAYER_DATA).read_bytes()
+        if digest(original) != PLAYER_DATA_SHA256:
+            raise RuntimeError('Unrecognized player data; refusing to patch background input.')
+        state['files'].append({'path': PLAYER_DATA.as_posix(),
+                               'backup': PLAYER_DATA_SHA256 + '/3-data.unity3d',
+                               'original_sha256': PLAYER_DATA_SHA256})
+        originals.append(original)
+    return state, originals
+
+
 def check_backups(folder, state):
     for item in state['files']:
         backup = folder / 'backup' / item['backup']
@@ -423,7 +483,8 @@ def prepare_install(root, folder):
         else:
             originals = [(folder / 'backup' / item['backup']).read_bytes()
                          for item in previous_state['files']]
-            return copy.deepcopy(previous_state), originals, previous_state
+            state, originals = include_player_data(root, copy.deepcopy(previous_state), originals)
+            return state, originals, previous_state
 
     matches = list((root / AA / 'StandaloneWindows64').glob(PATTERN))
     if len(matches) != 1:
@@ -442,6 +503,7 @@ def prepare_install(root, folder):
                                'original_sha256': checksum})
     if hashes in VERIFIED_UPDATES:
         state['game_build'] = VERIFIED_UPDATES[hashes]
+    state, originals = include_player_data(root, state, originals)
     return state, originals, previous_state
 
 
@@ -450,7 +512,9 @@ def install(root, folder, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
         raise ValueError('--opacity must be between 0.0 and 1.0')
     state, originals, previous_state = prepare_install(root, folder)
     bundle, catalog, token, report = build(originals[0], originals[1], scale, opacity)
-    outputs = [bundle, catalog, token]
+    outputs = [bundle, catalog, token, build_focus_patch(originals[3])]
+    report['revision'] = 12
+    report['run_in_background'] = False
     previous = [(root / item['path']).read_bytes() for item in state['files']]
     # Build and validate first. Only then persist the new backup and state.
     for item, content in zip(state['files'], originals):
@@ -462,7 +526,7 @@ def install(root, folder, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
     if previous_state is not None and state['files'] != previous_state['files']:
         archived = json.dumps(previous_state, indent=2).encode()
         atomic_write(folder / 'backup' / ('state-' + digest(archived) + '.json'), archived)
-        print('Verified game update detected. Previous backups and state retained in backup/.')
+        print('Installation upgraded. Previous backups and state retained in backup/.')
     old_state = previous_state if previous_state is not None else copy.deepcopy(state)
     for item, content in zip(state['files'], outputs):
         item['installed_sha256'] = digest(content)
@@ -480,6 +544,7 @@ def install(root, folder, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
         raise
     print(f'Installed: dialogue size 26 -> {26 * scale:g} ({scale:.0%} of original).')
     print(f'Dialogue box background opacity: {opacity:g} (0 = transparent, 1 = opaque).')
+    print('Background input disabled: the game pauses while it is out of focus.')
     print(f'Also enlarged {len(report["ui_text_changes"])} labels and text fields in dialogue, text log and evidence.')
     print(f'Validated {report["verified_objects"]} objects; {report["modified_objects"]} UI objects patched.')
     print('Launch the game normally. Original files are backed up in TyrionCuthbertLargerTextMod/backup.')
@@ -496,7 +561,7 @@ def uninstall(root, folder):
         atomic_write(root / item['path'], content)
         if digest((root / item['path']).read_bytes()) != item['original_sha256']:
             raise RuntimeError('Restore verification failed.')
-    print('Restored all three original files exactly. Backups retained.')
+    print(f'Restored all {len(state["files"])} original files exactly. Backups retained.')
 
 
 def main():
@@ -525,6 +590,7 @@ def main():
             elif all(h == i.get('installed_sha256') for h, i in zip(current, state['files'])):
                 print('Mod installed. Scale:', state['report']['scale'])
                 print('Dialogue box background opacity:', state['report'].get('opacity', 'not recorded'))
+                print('Pause when unfocused:', state['report'].get('run_in_background') is False)
             else:
                 raise RuntimeError('Partial installation: run the uninstall script to restore originals.')
     else:

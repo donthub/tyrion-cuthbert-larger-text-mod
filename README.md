@@ -15,6 +15,7 @@ These changes include:
 - Text log text size
 - Description texts in evidence panels
 - Text in the “Obtained evidence!” and “Evidence updated!” notifications, with a wider panel and the description directly below the item name beside the picture. Detail fields follow the description, and the panel height adjusts to the content.
+- Pause when the game loses focus, preventing background inputs from advancing dialogue or activating controls. Switch back to the game to resume.
 
 Saves are not affected by this mod.
 
@@ -44,7 +45,9 @@ Every adjustment is calculated from the original backup, so repeated installatio
 
 Original files are kept in `TyrionCuthbertLargerTextMod/backup`, with SHA-256 hashes in `state.json`. Keep this folder to remove the mod. The Windows installer manages `.mod-tools/windows-py...`; the Linux installer manages `.venv-linux`. Older Windows installations may also have `.mod-tools/python`, which remains supported for direct `mod.py` invocation outside a virtual environment. Windows binaries are ignored on Linux.
 
-The mod changes the default shared asset bundle, its CRC entry in `Tyrion1_Data/StreamingAssets/aa/catalog.bin`, and the catalog's cache version token in `catalog.hash`. It never writes save files.
+The mod changes the default shared asset bundle, its CRC entry in `Tyrion1_Data/StreamingAssets/aa/catalog.bin`, the catalog's cache version token in `catalog.hash`, and the `runInBackground` player setting in `Tyrion1_Data/data.unity3d`. All four files are backed up and restored on uninstall. It never writes save files.
+
+Re-run the updated installer to add the focus fix to an existing installation. It retains the existing UI backups and adds a backup of the verified original player data. The fix disables Unity's [Run in Background](https://docs.unity.com/en-us/engine/6000.5/script-reference/unityengine/application/runinbackground) setting, so gameplay pauses while another application has focus. Player data from unsupported builds or other mods is rejected before any game files are changed.
 
 Steam verification or updates can replace modified files. For Steam build **25968594**, copy the updated mod scripts into your existing mod folder and run the installer again. Keep `backup` and `state.json`. The installer recognizes the exact clean bundle, catalog, and hash from this update, validates the patch, then backs up the new originals in a separate subfolder. Previous backups and an archived state file remain in `backup`. Uninstall now restores the new build's originals.
 
@@ -55,6 +58,8 @@ Automatic migration refuses unknown or partially updated files and changes from 
 `mod.py` is the editable source. It uses [UnityPy 1.25.4](https://github.com/K0lb3/UnityPy), provisioned by the platform installer. The actual dialogue renderer is [Super Text Mesh](https://kaiclavier.com/docs/SuperTextMesh.html); TextMesh Pro is used elsewhere in the interface. Unity validates bundles using a CRC of their [uncompressed contents](https://docs.unity3d.com/ScriptReference/AssetBundle.LoadFromMemory.html).
 
 The installer reparses the rebuilt bundle, checks all objects and unchanged resource streams, and checks the installed hashes. Install, adjustment, repeat installation, and byte-exact uninstall are also exercised on an isolated copy.
+
+For the focus fix, validation checks that `runInBackground` is false and that every other byte in the unpacked player data is unchanged. To check runtime behavior, switch to another application during dialogue, press the usual advance/menu keys or controller buttons, then return: dialogue should remain at the same point and controls should work again. This runtime check, including Proton / Steam Deck focus handling, still needs in-game verification.
 
 Run the regression tests with `python -m unittest discover -s tests -v`. To validate local game assets without modifying the installation, run `python tests/validate_game.py --game-dir "path/to/game"` using a Python environment containing UnityPy 1.25.4. This checks migration when existing mod state is present, repeat installation, scales 1.1/1.3/1.5/2.0, background opacities 0/0.8/0.99/1, and exact restoration. In-game visual validation of the updated build is still needed.
 

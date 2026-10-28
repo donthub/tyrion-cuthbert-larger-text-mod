@@ -18,13 +18,13 @@ class UpdateTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.folder = self.root / 'TyrionCuthbertLargerTextMod'
         self.paths = [mod.AA / 'StandaloneWindows64/defaultlocalgroup_assets_default_new.bundle',
-                      mod.AA / 'catalog.bin', mod.AA / 'catalog.hash']
-        self.clean = [b'new bundle', b'new catalog', b'new token']
-        self.outputs = [b'patched bundle', b'patched catalog', b'patched token']
+                      mod.AA / 'catalog.bin', mod.AA / 'catalog.hash', mod.PLAYER_DATA]
+        self.clean = [b'new bundle', b'new catalog', b'new token', b'new player data']
+        self.outputs = [b'patched bundle', b'patched catalog', b'patched token', b'patched player data']
         for path, content in zip(self.paths, self.clean):
             mod.atomic_write(self.root / path, content)
         self.old = {'files': []}
-        for i, path in enumerate(self.paths):
+        for i, path in enumerate(self.paths[:3]):
             old_path = str(path).replace('_new.bundle', '_old.bundle')
             original = f'old original {i}'.encode()
             backup = f'{i}-old'
@@ -34,14 +34,20 @@ class UpdateTests(unittest.TestCase):
                                       'installed_sha256': mod.digest(b'old patched')})
         mod.atomic_write(self.folder / 'state.json', json.dumps(self.old).encode())
         self.snapshot = self.files()
-        known = {tuple(map(mod.digest, self.clean)): 'test-build'}
+        known = {tuple(map(mod.digest, self.clean[:3])): 'test-build'}
         self.known = patch.object(mod, 'VERIFIED_UPDATES', known)
         self.known.start()
         self.addCleanup(self.known.stop)
         report = {'scale': 1.5, 'ui_text_changes': [], 'verified_objects': 1, 'modified_objects': 1}
-        self.builder = patch.object(mod, 'build', return_value=(*self.outputs, report))
+        self.builder = patch.object(mod, 'build', return_value=(*self.outputs[:3], report))
         self.build = self.builder.start()
         self.addCleanup(self.builder.stop)
+        player_hash = patch.object(mod, 'PLAYER_DATA_SHA256', mod.digest(self.clean[3]))
+        player_hash.start()
+        self.addCleanup(player_hash.stop)
+        focus = patch.object(mod, 'build_focus_patch', return_value=self.outputs[3])
+        self.focus = focus.start()
+        self.addCleanup(focus.stop)
 
     def files(self):
         return {p.relative_to(self.root): p.read_bytes()
@@ -53,6 +59,8 @@ class UpdateTests(unittest.TestCase):
         mod.install(self.root, self.folder, 1.5)
         state = mod.load_state(self.folder)
         self.assertEqual(state['game_build'], 'test-build')
+        self.assertEqual(len(state['files']), 4)
+        self.assertFalse(state['report']['run_in_background'])
         archive = list((self.folder / 'backup').glob('state-*.json'))
         self.assertEqual(len(archive), 1)
         self.assertEqual(json.loads(archive[0].read_text()), self.old)
@@ -62,6 +70,7 @@ class UpdateTests(unittest.TestCase):
         for scale in (1.5, 1.3):
             mod.install(self.root, self.folder, scale)
             self.build.assert_called_with(self.clean[0], self.clean[1], scale, 0.99)
+            self.focus.assert_called_with(self.clean[3])
         mod.uninstall(self.root, self.folder)
         self.assertEqual([(self.root / p).read_bytes() for p in self.paths], self.clean)
 
@@ -98,6 +107,34 @@ class UpdateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'unsupported layout'):
             mod.install(self.root, self.folder, 1.5)
         self.assertEqual(self.files(), self.snapshot)
+
+    def test_unknown_player_data_does_not_write(self):
+        mod.atomic_write(self.root / mod.PLAYER_DATA, b'unknown player data')
+        before = self.files()
+        with self.assertRaisesRegex(RuntimeError, 'Unrecognized player data'):
+            mod.install(self.root, self.folder, 1.5)
+        self.assertEqual(self.files(), before)
+        self.build.assert_not_called()
+
+    def test_failed_focus_patch_preserves_all_files(self):
+        self.focus.side_effect = RuntimeError('unexpected player settings')
+        with self.assertRaisesRegex(RuntimeError, 'unexpected player settings'):
+            mod.install(self.root, self.folder, 1.5)
+        self.assertEqual(self.files(), self.snapshot)
+
+    def test_focus_write_failure_rolls_back_all_files(self):
+        write = mod.atomic_write
+
+        def fail_player_data(path, content):
+            if path == self.root / mod.PLAYER_DATA and content == self.outputs[3]:
+                raise OSError('simulated player data failure')
+            write(path, content)
+
+        with patch.object(mod, 'atomic_write', side_effect=fail_player_data):
+            with self.assertRaisesRegex(OSError, 'simulated player data failure'):
+                mod.install(self.root, self.folder, 1.5)
+        self.assertEqual(mod.load_state(self.folder), self.old)
+        self.assertEqual([(self.root / p).read_bytes() for p in self.paths], self.clean)
 
     def test_corrupt_backup_is_not_treated_as_update(self):
         mod.atomic_write(self.folder / 'backup' / '0-old', b'corrupt')
@@ -138,7 +175,9 @@ class UpdateTests(unittest.TestCase):
         mod.atomic_write(self.folder / 'state.json', json.dumps(self.old).encode())
         mod.install(self.root, self.folder, 1.5)
         self.assertEqual(mod.load_state(self.folder)['files'][0]['backup'], '0-old')
-        self.assertFalse(list((self.folder / 'backup').glob('state-*.json')))
+        # Adding player data archives the old three-file state even without a
+        # game update, and keeps its original UI backup names.
+        self.assertEqual(len(list((self.folder / 'backup').glob('state-*.json'))), 1)
         mod.uninstall(self.root, self.folder)
         (self.folder / 'state.json').unlink()
         mod.install(self.root, self.folder, 1.5)

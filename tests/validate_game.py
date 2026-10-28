@@ -140,6 +140,17 @@ def validate(game):
             report = installed['report']
             assert report['opacity'] == opacity
             assert report['added_objects'] == 3
+            assert report['run_in_background'] is False
+            player_env = UnityPy.load((root / mod.PLAYER_DATA).read_bytes())
+            managers = next(a for a in player_env.assets if a.name == 'globalgamemanagers')
+            player_settings = managers.objects[1]
+            assert player_settings.read_typetree(check_read=False)['runInBackground'] is False
+            original_player = UnityPy.load(originals[3])
+            original_managers = next(a for a in original_player.assets if a.name == 'globalgamemanagers')
+            before = original_managers.objects[1].get_raw_data()
+            after = player_settings.get_raw_data()
+            assert len(before) == len(after)
+            assert [i for i, (a, b) in enumerate(zip(before, after)) if a != b] == [406]
             # Loading bytes avoids holding a Windows file handle across uninstall.
             assets = UnityPy.load((root / paths[0]).read_bytes()).assets[0]
             validate_evidence_popup(assets, original_assets, scale)
@@ -182,7 +193,7 @@ def validate(game):
                 archives = list((folder / 'backup').glob('state-*.json'))
                 assert any(json.loads(p.read_text()) == previous_state for p in archives)
     assert [mod.digest((game / p).read_bytes()) for p in paths] == source_hashes
-    print('PASS: install, repeat, adjustment, scale/opacity limits, backup preservation, exact uninstall.')
+    print('PASS: install, repeat, adjustment, scale/opacity limits, focus setting, backup preservation, exact uninstall.')
     print('Source game files unchanged.')
     return reports
 
