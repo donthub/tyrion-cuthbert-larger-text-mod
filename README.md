@@ -39,6 +39,16 @@ Saves are not affected by this mod.
 - Run `Uninstall.bat` / `Uninstall.sh` to restore the original files.
 - Run `python mod.py status` / `python3 mod.py status` to check the installation.
 
+### Updating the mod
+
+Run `Update.bat` on Windows or `bash Update.sh` on Linux / Steam Deck from your existing mod folder. The updater downloads the latest stable release from this project's GitHub releases, selects the archive for your platform, and replaces the packaged mod files. It requires Python 3.10 or newer and an internet connection; no additional Python packages are needed.
+
+After the download completes, close the game and run `Install.bat` / `Install.sh` with your preferred scale and opacity to apply the new version, for example `Install.bat 1.3 0.8` or `bash Install.sh 1.3 0.8`. Updating the scripts alone does not change the installed game assets. The updater preserves `backup`, `state.json`, local Python environments, and other files outside the release's explicit file list. Release copies replace any local edits to packaged mod files.
+
+Use `Update.bat --check` or `bash Update.sh --check` to download and validate the latest release without replacing files. You can also run `python update_mod.py` / `python3 update_mod.py` directly. Downloads are validated before any files are replaced, including GitHub's SHA-256 checksum when available. If replacement fails, the updater attempts to restore the previous mod files.
+
+For installations that predate the updater, copy `update_mod.py` and the appropriate `Update.bat` / `Update.sh` launcher into the existing mod folder once, or extract a newer release into that folder. Keep `backup` and `state.json`.
+
 When invoking Python directly in an environment with UnityPy installed, use `python mod.py install --scale 1.3 --opacity 0.8` (or `python3` on Linux). Both options are optional and use their defaults when omitted. Re-run the installer with your desired scale and opacity to adjust an existing installation.
 
 Every adjustment is calculated from the original backup, so repeated installation never compounds the increase. Run the installer again to upgrade an older version of this mod; keep the existing backup and `state.json`. Larger settings take up more screen space. Dialogue choices and unrelated menus keep their existing text size. Extremely long lines and all languages/resolutions have not been visually tested; try a smaller scale if text exceeds its panel.
@@ -86,10 +96,10 @@ The workflow runs the regression tests, packages the tagged source, and publishe
 
 | Archive | Platform-specific files |
 | --- | --- |
-| `TyrionCuthbertLargerTextMod-v1.0.0-windows.zip` | `Install.bat`, `Uninstall.bat`, `windows_setup.py` |
-| `TyrionCuthbertLargerTextMod-v1.0.0-linux.tar.gz` | `Install.sh`, `Uninstall.sh` (executable, with Unix line endings) |
+| `TyrionCuthbertLargerTextMod-v1.0.0-Windows.zip` | `Install.bat`, `Uninstall.bat`, `Update.bat`, `windows_setup.py` |
+| `TyrionCuthbertLargerTextMod-v1.0.0-Linux-SteamDeck.tar.gz` | `Install.sh`, `Uninstall.sh`, `Update.sh` (executable, with Unix line endings) |
 
-Both archives contain a `TyrionCuthbertLargerTextMod` folder with `mod.py`, this README, its screenshots, and `AGENTS.md`. Game assets, backups, installation state, and Python dependencies are excluded; the installers download dependencies on first use. Linux packaging is for the Windows game running through Proton / Steam Deck.
+Both archives contain a `TyrionCuthbertLargerTextMod` folder with `mod.py`, `update_mod.py`, and this README. Game assets, backups, installation state, and Python dependencies are excluded; the installers download dependencies on first use. Linux packaging is for the Windows game running through Proton / Steam Deck.
 
 Tags with a prerelease suffix produce GitHub prereleases. GitHub Actions must be enabled; the workflow uses the automatic `GITHUB_TOKEN` with `contents: write`, so no personal access token or extra secret is needed. Use a new version tag for each release; the workflow does not replace an existing release.
 

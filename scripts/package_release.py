@@ -11,9 +11,9 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 FOLDER = 'TyrionCuthbertLargerTextMod'
 # Explicit file lists keep local backups, game assets, and environments out.
-COMMON_FILES = ('mod.py', 'README.md')
-WINDOWS_FILES = COMMON_FILES + ('Install.bat', 'Uninstall.bat', 'windows_setup.py')
-LINUX_FILES = COMMON_FILES + ('Install.sh', 'Uninstall.sh')
+COMMON_FILES = ('mod.py', 'README.md', 'update_mod.py')
+WINDOWS_FILES = COMMON_FILES + ('Install.bat', 'Uninstall.bat', 'Update.bat', 'windows_setup.py')
+LINUX_FILES = COMMON_FILES + ('Install.sh', 'Uninstall.sh', 'Update.sh')
 
 
 def release_tag(value):
