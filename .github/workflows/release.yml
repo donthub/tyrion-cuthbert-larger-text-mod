@@ -41,6 +41,6 @@ jobs:
             flags+=(--prerelease)
           fi
           gh release create "$RELEASE_TAG" \
-            "dist/TyrionCuthbertLargerTextMod-${RELEASE_TAG}-windows.zip" \
-            "dist/TyrionCuthbertLargerTextMod-${RELEASE_TAG}-linux.tar.gz" \
+            "dist/TyrionCuthbertLargerTextMod-${RELEASE_TAG}-Windows.zip" \
+            "dist/TyrionCuthbertLargerTextMod-${RELEASE_TAG}-Linux-SteamDeck.tar.gz" \
             --verify-tag --generate-notes --title "$RELEASE_TAG" "${flags[@]}"
