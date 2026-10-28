@@ -12,6 +12,7 @@ These changes include:
 - Dialogue box opacity
 - Dialogue box text size
 - Dialogue box secondary descriptions
+- Preserve dialogue and narration text when returning from Text log.
 - Text log text size
 - Description texts in evidence panels
 - Text in the “Obtained evidence!” and “Evidence updated!” notifications, with a wider panel and the description directly below the item name beside the picture. Detail fields follow the description, and the panel height adjusts to the content.
@@ -41,6 +42,8 @@ When invoking Python directly in an environment with UnityPy installed, use `pyt
 
 Every adjustment is calculated from the original backup, so repeated installation never compounds the increase. Run the installer again to upgrade an older version of this mod; keep the existing backup and `state.json`. Larger settings take up more screen space. Dialogue choices and unrelated menus keep their existing text size. Extremely long lines and all languages/resolutions have not been visually tested; try a smaller scale if text exceeds its panel.
 
+To apply the Text log fix to an existing installation, copy the updated `mod.py` into the installed mod folder and re-run the installer with your preferred scale and opacity. Keep `backup` and `state.json`.
+
 ## Backups and game updates
 
 Original files are kept in `TyrionCuthbertLargerTextMod/backup`, with SHA-256 hashes in `state.json`. Keep this folder to remove the mod. The Windows installer manages `.mod-tools/windows-py...`; the Linux installer manages `.venv-linux`. Older Windows installations may also have `.mod-tools/python`, which remains supported for direct `mod.py` invocation outside a virtual environment. Windows binaries are ignored on Linux.
@@ -58,6 +61,8 @@ Automatic migration refuses unknown or partially updated files and changes from 
 `mod.py` is the editable source. It uses [UnityPy 1.25.4](https://github.com/K0lb3/UnityPy), provisioned by the platform installer. The actual dialogue renderer is [Super Text Mesh](https://kaiclavier.com/docs/SuperTextMesh.html); TextMesh Pro is used elsewhere in the interface. Unity validates bundles using a CRC of their [uncompressed contents](https://docs.unity3d.com/ScriptReference/AssetBundle.LoadFromMemory.html).
 
 The installer reparses the rebuilt bundle, checks all objects and unchanged resource streams, and checks the installed hashes. Install, adjustment, repeat installation, and byte-exact uninstall are also exercised on an isolated copy.
+
+The Text log fix enables Super Text Mesh's [`rememberReadPosition`](https://kaiclavier.com/docs/SuperTextMesh.html#rememberReadPosition) on the dialogue and narrator renderers. This preserves their drawing position when disabled and re-enabled, while leaving the game's manual text playback, timing and events unchanged. Asset validation checks both prefabs at every tested scale and opacity. In-game verification is still needed: open and close Text log repeatedly on a completed line and during its reveal, then advance to the next line; repeat for narration. The previous text should return and subsequent lines should play normally.
 
 For the focus fix, validation checks that `runInBackground` is false and that every other byte in the unpacked player data is unchanged. To check runtime behavior, switch to another application during dialogue, press the usual advance/menu keys or controller buttons, then return: dialogue should remain at the same point and controls should work again. This runtime check, including Proton / Steam Deck focus handling, still needs in-game verification.
 

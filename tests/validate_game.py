@@ -160,7 +160,15 @@ def validate(game):
                 controller = next(assets.objects[c['component']['m_PathID']].read_typetree()
                                   for c in go['m_Component']
                                   if 'dialogueDisplay' in assets.objects[c['component']['m_PathID']].read_typetree())
-                text = assets.objects[controller['dialogueDisplay']['m_PathID']].read_typetree()
+                text_id = controller['dialogueDisplay']['m_PathID']
+                text = assets.objects[text_id].read_typetree()
+                # Re-enabling the dialogue after Text log must retain its read
+                # position. Keep manual reading, timing, content and events intact.
+                assert text['rememberReadPosition'] == 1, prefab
+                original_text = original_assets.objects[text_id].read_typetree()
+                assert text['autoRead'] == original_text['autoRead'] == 0
+                assert {k: v for k, v in text.items() if k not in ('size', 'rememberReadPosition')} == {
+                    k: v for k, v in original_text.items() if k not in ('size', 'rememberReadPosition')}
                 text_go = assets.objects[text['m_GameObject']['m_PathID']].read_typetree()
                 rect = next(assets.objects[c['component']['m_PathID']].read_typetree()
                             for c in text_go['m_Component']
@@ -193,7 +201,8 @@ def validate(game):
                 archives = list((folder / 'backup').glob('state-*.json'))
                 assert any(json.loads(p.read_text()) == previous_state for p in archives)
     assert [mod.digest((game / p).read_bytes()) for p in paths] == source_hashes
-    print('PASS: install, repeat, adjustment, scale/opacity limits, focus setting, backup preservation, exact uninstall.')
+    print('PASS: install, repeat, adjustment, scale/opacity limits, dialogue retention settings, '
+          'focus setting, backup preservation, exact uninstall.')
     print('Source game files unchanged.')
     return reports
 

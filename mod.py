@@ -319,9 +319,14 @@ def build(original, catalog, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
                           'dialogueDisplay' in o.read_typetree())
         text_obj = assets.objects[controller['dialogueDisplay']['m_PathID']]
         text = text_obj.read_typetree()
-        if text.get('size') != 26.0 or 'drawText' not in text:
+        if (text.get('size') != 26.0 or 'drawText' not in text
+                or text.get('rememberReadPosition') not in (0, 1)):
             raise RuntimeError('Dialogue format does not match the supported build.')
         text['size'] = round(26.0 * scale, 2)
+        # Text log temporarily hides the dialogue. Super Text Mesh otherwise
+        # rebuilds on re-enable and, with autoRead off, leaves the line blank.
+        # Preserve the read position while leaving new-line playback manual.
+        text['rememberReadPosition'] = 1
         edit(text_obj, text)
         text_go = assets.objects[text['m_GameObject']['m_PathID']].read_typetree()
         rect_obj = next(o for o in components(text_go) if o.type.name == 'RectTransform')
@@ -383,7 +388,7 @@ def build(original, catalog, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
     patched_catalog = catalog[:offset] + struct.pack('<I', new_crc) + catalog[offset + 4:]
     # The local catalog hash is a cache version token. Change it with the catalog.
     hash_token = hashlib.md5(patched_catalog).hexdigest().encode('ascii')
-    report = {'revision': 11, 'scale': scale, 'opacity': opacity,
+    report = {'revision': 13, 'scale': scale, 'opacity': opacity,
               'changes': changes, 'ui_text_changes': ui_changes,
               'verified_objects': len(after.objects), 'added_objects': len(after.objects) - len(originals),
               'modified_objects': len(modified), 'original_crc': old_crc, 'patched_crc': new_crc,
@@ -513,7 +518,6 @@ def install(root, folder, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
     state, originals, previous_state = prepare_install(root, folder)
     bundle, catalog, token, report = build(originals[0], originals[1], scale, opacity)
     outputs = [bundle, catalog, token, build_focus_patch(originals[3])]
-    report['revision'] = 12
     report['run_in_background'] = False
     previous = [(root / item['path']).read_bytes() for item in state['files']]
     # Build and validate first. Only then persist the new backup and state.
