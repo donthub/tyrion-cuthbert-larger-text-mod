@@ -27,6 +27,14 @@ TOOLBAR_OFFSET_Y = 20.0 * 1080.0 / 1440.0
 DIALOGUE_BACKGROUND_OPACITY = 0.99
 # Leave 2.5% of the screen on each side of the normal dialogue panel.
 DIALOGUE_SIDE_MARGIN = 0.025
+# Clean files inspected in Steam build 25968594. Automatic backup migration is
+# restricted to this exact bundle/catalog/hash combination, not just its Unity
+# version: a partial update or another mod must never become our new baseline.
+VERIFIED_UPDATES = {
+    ('80d021717fbb258b6939b02fc87fbd0629a8536db0849a6f71dd9ec27d3feda8',
+     'a79ded5b8ae6890b91d4c277dfbe424c7277b24b452f4eaf0fe10ef26e1aa9e4',
+     '972423fe261f4d4f7044f0b0962d1f7ea52dd33375520fbe784080ac46f0ac91'): '25968594',
+}
 
 
 def digest(data):
@@ -297,7 +305,7 @@ def build(original, catalog, scale):
     patched_catalog = catalog[:offset] + struct.pack('<I', new_crc) + catalog[offset + 4:]
     # The local catalog hash is a cache version token. Change it with the catalog.
     hash_token = hashlib.md5(patched_catalog).hexdigest().encode('ascii')
-    report = {'revision': 7, 'scale': scale, 'changes': changes, 'ui_text_changes': ui_changes,
+    report = {'revision': 8, 'scale': scale, 'changes': changes, 'ui_text_changes': ui_changes,
               'verified_objects': len(originals),
               'modified_objects': len(modified), 'original_crc': old_crc, 'patched_crc': new_crc,
               'catalog_crc_offset': offset}
@@ -309,38 +317,78 @@ def load_state(folder):
     return json.loads(path.read_text()) if path.exists() else None
 
 
-def check_files(root, folder, state):
+def check_backups(folder, state):
     for item in state['files']:
         backup = folder / 'backup' / item['backup']
         if digest(backup.read_bytes()) != item['original_sha256']:
             raise RuntimeError('Backup verification failed: ' + str(backup))
-        current = digest((root / item['path']).read_bytes())
+
+
+def check_files(root, folder, state):
+    check_backups(folder, state)
+    for item in state['files']:
+        path = root / item['path']
+        if not path.is_file():
+            raise RuntimeError('A game update removed ' + item['path'] +
+                               '. Run install for a supported update. See README.md.')
+        current = digest(path.read_bytes())
         if current not in {item['original_sha256'], item.get('installed_sha256')}:
             raise RuntimeError('A game update or another mod changed ' + item['path'] +
                                '. Refusing to overwrite it. See README.md.')
 
 
+def prepare_install(root, folder):
+    """Select originals without writing anything; also used by Windows preflight."""
+    previous_state = load_state(folder)
+    if previous_state is not None:
+        # A broken backup is a separate problem, never evidence of a game update.
+        check_backups(folder, previous_state)
+        try:
+            check_files(root, folder, previous_state)
+        except RuntimeError:
+            pass
+        else:
+            originals = [(folder / 'backup' / item['backup']).read_bytes()
+                         for item in previous_state['files']]
+            return copy.deepcopy(previous_state), originals, previous_state
+
+    matches = list((root / AA / 'StandaloneWindows64').glob(PATTERN))
+    if len(matches) != 1:
+        raise RuntimeError('Expected exactly one default asset bundle. See README.md.')
+    paths = [matches[0].relative_to(root), AA / 'catalog.bin', AA / 'catalog.hash']
+    originals = [(root / path).read_bytes() for path in paths]
+    hashes = tuple(digest(content) for content in originals)
+    if previous_state is not None and hashes not in VERIFIED_UPDATES:
+        raise RuntimeError('Game files differ from the previous installation and do not match '
+                           'a verified clean update. Refusing to overwrite them. See README.md.')
+    # Separate generations so an update never replaces the previous originals.
+    state = {'files': []}
+    for i, (path, checksum) in enumerate(zip(paths, hashes)):
+        state['files'].append({'path': path.as_posix(),
+                               'backup': hashes[0] + '/' + str(i) + '-' + path.name,
+                               'original_sha256': checksum})
+    if hashes in VERIFIED_UPDATES:
+        state['game_build'] = VERIFIED_UPDATES[hashes]
+    return state, originals, previous_state
+
+
 def install(root, folder, scale):
-    state = load_state(folder)
-    if state is None:
-        matches = list((root / AA / 'StandaloneWindows64').glob(PATTERN))
-        if len(matches) != 1:
-            raise RuntimeError('Expected exactly one default asset bundle.')
-        paths = [matches[0].relative_to(root), AA / 'catalog.bin', AA / 'catalog.hash']
-        state = {'files': []}
-        for i, path in enumerate(paths):
-            content = (root / path).read_bytes()
-            backup_name = str(i) + '-' + path.name
-            atomic_write(folder / 'backup' / backup_name, content)
-            state['files'].append({'path': path.as_posix(), 'backup': backup_name,
-                                   'original_sha256': digest(content)})
-        atomic_write(folder / 'state.json', json.dumps(state, indent=2).encode())
-    check_files(root, folder, state)
-    originals = [(folder / 'backup' / item['backup']).read_bytes() for item in state['files']]
+    state, originals, previous_state = prepare_install(root, folder)
     bundle, catalog, token, report = build(originals[0], originals[1], scale)
     outputs = [bundle, catalog, token]
     previous = [(root / item['path']).read_bytes() for item in state['files']]
-    old_state = copy.deepcopy(state)
+    # Build and validate first. Only then persist the new backup and state.
+    for item, content in zip(state['files'], originals):
+        backup = folder / 'backup' / item['backup']
+        if not backup.exists():
+            atomic_write(backup, content)
+        elif digest(backup.read_bytes()) != item['original_sha256']:
+            raise RuntimeError('Backup verification failed: ' + str(backup))
+    if previous_state is not None and state['files'] != previous_state['files']:
+        archived = json.dumps(previous_state, indent=2).encode()
+        atomic_write(folder / 'backup' / ('state-' + digest(archived) + '.json'), archived)
+        print('Verified game update detected. Previous backups and state retained in backup/.')
+    old_state = previous_state if previous_state is not None else copy.deepcopy(state)
     for item, content in zip(state['files'], outputs):
         item['installed_sha256'] = digest(content)
     state['report'] = report

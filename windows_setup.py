@@ -61,9 +61,7 @@ def main():
             sys.path.insert(0, str(HERE))
             import mod
             mod.game_closed()
-            state = mod.load_state(HERE)
-            if state:
-                mod.check_files(HERE.parent, HERE, state)
+            mod.prepare_install(HERE.parent, HERE)
         python = prepare_python()
         if args.setup_only:
             print('Windows dependencies are ready. Game files were not changed.')

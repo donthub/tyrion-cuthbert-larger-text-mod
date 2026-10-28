@@ -2,6 +2,8 @@
 
 Asset mod for Windows build of **Tyrion Cuthbert: Attorney of the Arcane** (Unity 6000.5.8f1).
 
+Validated with Steam build **25968594**, including migration from the previous mod installation.
+
 This mod makes several adjustments to UI and text scaling in the game for easier reading on smaller screens, for example on Steam Deck.
 
 These changes include:
@@ -25,7 +27,7 @@ Saves are not affected by this mod.
 ## Use
 
 - Copy `TyrionCuthbertLargerTextMod` folder into the game folder. Game folder can be found by game > right click > Manage > Browse local files in Steam.
-- Run `Install.bar` / `Install.sh` for the default 50% increase.
+- Run `Install.bat` / `Install.sh` for the default 50% increase.
 - To choose a different increase on Windows, run `Install.bat 1.3` / `Install.sh 1.3` (30% larger). Supported scale range: 1.1 through 2.0.
 - Run `Uninstall.bat` / `Uninstall.sh` to restore the original files.
 - Run `python mod.py status` / `python3 mod.py status` to check the installation.
@@ -38,13 +40,17 @@ Original files are kept in `TyrionCuthbertLargerTextMod/backup`, with SHA-256 ha
 
 The mod changes the default shared asset bundle, its CRC entry in `Tyrion1_Data/StreamingAssets/aa/catalog.bin`, and the catalog's cache version token in `catalog.hash`. It never writes save files.
 
-Steam verification or updates can replace modified files. The patch refuses to overwrite files changed by an update or another mod. Uninstall before updating if possible. If an update already replaced files, use Steam's **Verify integrity of game files** to restore a consistent current game, and retain the old backup separately. Do not copy an old bundle over a newer build. Reinspection may be needed to support a changed game version.
+Steam verification or updates can replace modified files. For Steam build **25968594**, copy the updated mod scripts into your existing mod folder and run the installer again. Keep `backup` and `state.json`. The installer recognizes the exact clean bundle, catalog, and hash from this update, validates the patch, then backs up the new originals in a separate subfolder. Previous backups and an archived state file remain in `backup`. Uninstall now restores the new build's originals.
+
+Automatic migration refuses unknown or partially updated files and changes from other mods. If refused, use Steam's **Verify integrity of game files** to restore a consistent current game and try again. For an unsupported update, retain the entire old mod folder separately before starting a fresh installation; reinspection may still be needed. Do not restore old backups over a newer build. Uninstall before future game updates when possible.
 
 ## Implementation and validation
 
 `mod.py` is the editable source. It uses [UnityPy 1.25.4](https://github.com/K0lb3/UnityPy), provisioned by the platform installer. The actual dialogue renderer is [Super Text Mesh](https://kaiclavier.com/docs/SuperTextMesh.html); TextMesh Pro is used elsewhere in the interface. Unity validates bundles using a CRC of their [uncompressed contents](https://docs.unity3d.com/ScriptReference/AssetBundle.LoadFromMemory.html).
 
 The installer reparses the rebuilt bundle, checks all objects and unchanged resource streams, and checks the installed hashes. Install, adjustment, repeat installation, and byte-exact uninstall are also exercised on an isolated copy.
+
+Run the backup/update regression tests with `python -m unittest discover -s tests -v`. To validate local game assets without modifying the installation, run `python tests/validate_game.py --game-dir "path/to/game"` using a Python environment containing UnityPy 1.25.4. This checks migration when existing mod state is present, repeat installation, scales 1.1/1.3/1.5/2.0, and exact restoration. In-game visual validation of the updated build is still needed.
 
 ## AI provenance and usage notice
 
