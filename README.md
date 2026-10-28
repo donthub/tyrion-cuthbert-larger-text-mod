@@ -17,8 +17,9 @@ These changes include:
 
 Saves are not affected by this mod.
 
-![Unmodded](/image-unmodded.jpg)  
-![Modded](/image-modded.jpg)
+![Unmodded](image-unmodded.jpg)
+
+![Modded](image-modded.jpg)
 
 ## Pre-requisites
 
@@ -26,6 +27,7 @@ Saves are not affected by this mod.
 
 ## Use
 
+- Download the Windows `.zip` or Linux / Steam Deck `.tar.gz` archive from [Releases](https://github.com/donthub/tyrion-cuthbert-larger-text-mod/releases) and extract it.
 - Copy `TyrionCuthbertLargerTextMod` folder into the game folder. Game folder can be found by game > right click > Manage > Browse local files in Steam.
 - Run `Install.bat` / `Install.sh` for the default 50% increase.
 - To choose a different increase on Windows, run `Install.bat 1.3` / `Install.sh 1.3` (30% larger). Supported scale range: 1.1 through 2.0.
@@ -51,6 +53,28 @@ Automatic migration refuses unknown or partially updated files and changes from 
 The installer reparses the rebuilt bundle, checks all objects and unchanged resource streams, and checks the installed hashes. Install, adjustment, repeat installation, and byte-exact uninstall are also exercised on an isolated copy.
 
 Run the backup/update regression tests with `python -m unittest discover -s tests -v`. To validate local game assets without modifying the installation, run `python tests/validate_game.py --game-dir "path/to/game"` using a Python environment containing UnityPy 1.25.4. This checks migration when existing mod state is present, repeat installation, scales 1.1/1.3/1.5/2.0, and exact restoration. In-game visual validation of the updated build is still needed.
+
+## Publishing a release
+
+The GitHub Actions workflow in `.github/workflows/release.yml` runs when a tag starting with `v` is pushed. Tags must use `vMAJOR.MINOR.PATCH`, optionally followed by a prerelease suffix (for example, `v1.0.0-rc.1`). After committing and pushing the changes to release, create and push a new tag:
+
+```sh
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+```
+
+The workflow runs the regression tests, packages the tagged source, and publishes a GitHub release with generated release notes and two assets:
+
+| Archive | Platform-specific files |
+| --- | --- |
+| `TyrionCuthbertLargerTextMod-v1.0.0-windows.zip` | `Install.bat`, `Uninstall.bat`, `windows_setup.py` |
+| `TyrionCuthbertLargerTextMod-v1.0.0-linux.tar.gz` | `Install.sh`, `Uninstall.sh` (executable, with Unix line endings) |
+
+Both archives contain a `TyrionCuthbertLargerTextMod` folder with `mod.py`, this README, its screenshots, and `AGENTS.md`. Game assets, backups, installation state, and Python dependencies are excluded; the installers download dependencies on first use. Linux packaging is for the Windows game running through Proton / Steam Deck.
+
+Tags with a prerelease suffix produce GitHub prereleases. GitHub Actions must be enabled; the workflow uses the automatic `GITHUB_TOKEN` with `contents: write`, so no personal access token or extra secret is needed. Use a new version tag for each release; the workflow does not replace an existing release.
+
+To build the same archives locally without publishing, run `python scripts/package_release.py v1.0.0`. The files appear in `dist/`. Edit the explicit file lists in that script to change archive contents. Packaging and regression tests do not require game files or UnityPy, and do not replace the game validation described above.
 
 ## AI provenance and usage notice
 
