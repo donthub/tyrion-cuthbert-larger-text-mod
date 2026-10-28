@@ -40,12 +40,12 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=True)
     prefix = f'{FOLDER}-{args.tag}'
 
-    windows = args.output_dir / f'{prefix}-windows.zip'
+    windows = args.output_dir / f'{prefix}-Windows.zip'
     with zipfile.ZipFile(windows, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
         for name in WINDOWS_FILES:
             archive.writestr(f'{FOLDER}/{name}', file_bytes(name))
 
-    linux = args.output_dir / f'{prefix}-linux.tar.gz'
+    linux = args.output_dir / f'{prefix}-Linux-SteamDeck.tar.gz'
     with tarfile.open(linux, 'w:gz') as archive:
         for name in LINUX_FILES:
             data = file_bytes(name)
