@@ -147,6 +147,21 @@ def validate_evidence_popup(assets, original_assets, scale):
         fields = parent(row)
         assert fields['m_AnchorMax']['x'] == 1.0
         assert row['m_SizeDelta']['y'] == mod.float32_tree(45.0 * scale)
+        detail_layout = component(owner(row), 'm_Spacing')[1]
+        assert detail_layout['m_ChildControlWidth'] == detail_layout['m_ChildControlHeight'] == 1
+        assert detail_layout['m_ChildForceExpandWidth'] == detail_layout['m_ChildForceExpandHeight'] == 0
+        assert detail_layout['m_Spacing'] == 0.0
+        assert all(value == 0 for value in detail_layout['m_Padding'].values())
+        assert component(owner(fields), 'm_Spacing')[1]['m_ChildControlHeight'] == 1
+        for key, weight in (('fieldName', 0.4), ('fieldValue', 0.6)):
+            label = rect_of(assets.objects[field[key]['m_PathID']].read_typetree())
+            sizing = component(owner(label), 'm_IgnoreLayout')[1]
+            assert not sizing['m_IgnoreLayout']
+            assert sizing['m_MinWidth'] == sizing['m_PreferredWidth'] == 0.0
+            assert sizing['m_FlexibleWidth'] == mod.float32_tree(weight)
+            # Do not override TMP height: empty labels must contribute zero,
+            # and wrapped values must be able to increase their row's height.
+            assert sizing['m_MinHeight'] == sizing['m_PreferredHeight'] == -1.0
     header = assets.objects[controller['header']['m_PathID']].read_typetree()
     assert header['m_enableAutoSizing']
     assert rect_of(header)['m_SizeDelta']['y'] < (1 - window['m_AnchorMax']['y']) * 1080
@@ -259,7 +274,7 @@ def validate(game):
             installed = mod.load_state(folder)
             report = installed['report']
             assert report['opacity'] == opacity
-            assert report['added_objects'] == 3
+            assert report['added_objects'] == 18
             assert report['run_in_background'] is False
             player_env = UnityPy.load((root / mod.PLAYER_DATA).read_bytes())
             managers = next(a for a in player_env.assets if a.name == 'globalgamemanagers')

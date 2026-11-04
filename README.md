@@ -17,7 +17,7 @@ These changes include:
 - Preserve dialogue and narration text when returning from Text log.
 - Text log text size
 - Description texts in evidence panels
-- Text in the “Obtained evidence!” and “Evidence updated!” notifications, with a wider panel and the description directly below the item name beside the picture. Detail fields follow the description, and the panel height adjusts to the content.
+- Text in the “Obtained evidence!” and “Evidence updated!” notifications, with a wider panel and the description directly below the item name beside the picture. Detail fields follow the description. The panel height fits the text and picture; empty detail rows no longer reserve extra height.
 - Pause when the game loses focus, preventing background inputs from advancing dialogue or activating controls. Switch back to the game to resume.
 
 Saves are not affected by this mod.
@@ -77,6 +77,8 @@ Automatic migration refuses unknown or partially updated files and changes from 
 The installer reparses the rebuilt bundle, checks all objects and unchanged resource streams, and checks the installed hashes. Install, adjustment, repeat installation, and byte-exact uninstall are also exercised on an isolated copy.
 
 Popup image validation checks clearance above both dialogue panels at each tested scale, the unchanged top margin and aspect-ratio fitter, and preservation of the evidence menu's separate image viewer. In-game visual verification of building plans and other story illustrations is still needed.
+
+Evidence notification validation checks that detail rows use their text's preferred height instead of a fixed height, while retaining the panel width and the 40/60 name/value column split. In-game verification is still needed for short and long entries in both notification variants, including entries with empty or wrapped detail fields.
 
 The Text log fix enables Super Text Mesh's [`rememberReadPosition`](https://kaiclavier.com/docs/SuperTextMesh.html#rememberReadPosition) on the dialogue and narrator renderers. This preserves their drawing position when disabled and re-enabled, while leaving the game's manual text playback, timing and events unchanged. Asset validation checks both prefabs at every tested scale and opacity. In-game verification is still needed: open and close Text log repeatedly on a completed line and during its reveal, then advance to the next line; repeat for narration. The previous text should return and subsequent lines should play normally.
 

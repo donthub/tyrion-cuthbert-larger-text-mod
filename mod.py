@@ -325,6 +325,24 @@ def expand_ui(assets, scale, modified, opacity=DIALOGUE_BACKGROUND_OPACITY, test
     row['m_ChildAlignment'] = 0
     row['m_ChildControlWidth'] = row['m_ChildControlHeight'] = 1
     row['m_ChildForceExpandWidth'] = row['m_ChildForceExpandHeight'] = 0
+    # Fixed-height detail rows reserve space even when their labels are empty.
+    # Measure the text in each row so empty fields collapse and wrapped fields
+    # report their actual height all the way up to the Window's fitter.
+    component(fields, 'm_Spacing')['m_ChildControlHeight'] = 1
+    for suffix in ('', ' (1)', ' (2)', ' (3)', ' (4)'):
+        detail_path = fields + '/Item Field' + suffix
+        detail = add_component(detail_path, 'Dialogue Box/Container/Buttons', 'm_Spacing')
+        detail['m_Spacing'] = 0.0
+        detail['m_ChildAlignment'] = 0
+        detail['m_ChildControlWidth'] = detail['m_ChildControlHeight'] = 1
+        detail['m_ChildForceExpandWidth'] = detail['m_ChildForceExpandHeight'] = 0
+        # Preserve the original 40/60 name/value split while letting the row
+        # measure preferred heights; horizontal anchors alone cannot do both.
+        for label, weight in (('Item Field Names', 0.4), ('Item Field Values', 0.6)):
+            sizing = add_component(detail_path + '/' + label, header, 'm_IgnoreLayout')
+            sizing['m_IgnoreLayout'] = 0
+            sizing['m_MinWidth'] = sizing['m_PreferredWidth'] = 0.0
+            sizing['m_FlexibleWidth'] = weight
     icon = add_component(popup + '/Top/Icon', header, 'm_IgnoreLayout')
     icon['m_IgnoreLayout'] = 0
     icon['m_MinWidth'] = icon['m_PreferredWidth'] = 270.0
