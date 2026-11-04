@@ -18,9 +18,10 @@ class UpdateTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.folder = self.root / 'TyrionCuthbertLargerTextMod'
         self.paths = [mod.AA / 'StandaloneWindows64/defaultlocalgroup_assets_default_new.bundle',
-                      mod.AA / 'catalog.bin', mod.AA / 'catalog.hash', mod.PLAYER_DATA]
-        self.clean = [b'new bundle', b'new catalog', b'new token', b'new player data']
-        self.outputs = [b'patched bundle', b'patched catalog', b'patched token', b'patched player data']
+                      mod.AA / 'catalog.bin', mod.AA / 'catalog.hash', mod.PLAYER_DATA,
+                      mod.AA / 'StandaloneWindows64/defaultlocalgroup_assets_courtroom_new.bundle']
+        self.clean = [b'new bundle', b'new catalog', b'new token', b'new player data', b'courtroom']
+        self.outputs = [b'patched bundle', b'patched catalog', b'patched token', b'patched player data', b'patched courtroom']
         for path, content in zip(self.paths, self.clean):
             mod.atomic_write(self.root / path, content)
         self.old = {'files': []}
@@ -39,7 +40,12 @@ class UpdateTests(unittest.TestCase):
         self.known.start()
         self.addCleanup(self.known.stop)
         report = {'scale': 1.5, 'ui_text_changes': [], 'verified_objects': 1, 'modified_objects': 1}
-        self.builder = patch.object(mod, 'build', return_value=(*self.outputs[:3], report))
+        self.builder = patch.object(mod, 'build', side_effect=lambda *args, **kwargs:
+            (self.outputs[4] if kwargs.get('testimony') else self.outputs[0],
+             self.outputs[1], self.outputs[2], dict(report)))
+        court_hash = patch.object(mod, 'COURT_SHA256', mod.digest(self.clean[4]))
+        court_hash.start()
+        self.addCleanup(court_hash.stop)
         self.build = self.builder.start()
         self.addCleanup(self.builder.stop)
         player_hash = patch.object(mod, 'PLAYER_DATA_SHA256', mod.digest(self.clean[3]))
@@ -59,7 +65,7 @@ class UpdateTests(unittest.TestCase):
         mod.install(self.root, self.folder, 1.5)
         state = mod.load_state(self.folder)
         self.assertEqual(state['game_build'], 'test-build')
-        self.assertEqual(len(state['files']), 4)
+        self.assertEqual(len(state['files']), 5)
         self.assertFalse(state['report']['run_in_background'])
         archive = list((self.folder / 'backup').glob('state-*.json'))
         self.assertEqual(len(archive), 1)
@@ -69,10 +75,26 @@ class UpdateTests(unittest.TestCase):
             self.assertEqual(self.files()[path], self.snapshot[path])
         for scale in (1.5, 1.3):
             mod.install(self.root, self.folder, scale)
-            self.build.assert_called_with(self.clean[0], self.clean[1], scale, 0.99)
+            self.build.assert_any_call(self.clean[0], self.clean[1], scale, 0.99)
+            self.build.assert_any_call(self.clean[4], self.outputs[1], scale, 0.99, testimony=True)
             self.focus.assert_called_with(self.clean[3])
         mod.uninstall(self.root, self.folder)
         self.assertEqual([(self.root / p).read_bytes() for p in self.paths], self.clean)
+
+    def test_unknown_courtroom_does_not_write(self):
+        mod.atomic_write(self.root / self.paths[4], b'unknown courtroom')
+        before = self.files()
+        with self.assertRaisesRegex(RuntimeError, 'Unrecognized courtroom'):
+            mod.install(self.root, self.folder, 1.5)
+        self.assertEqual(self.files(), before)
+        self.build.assert_not_called()
+
+    def test_courtroom_build_failure_does_not_write(self):
+        self.build.side_effect = [(*self.outputs[:3], {}), RuntimeError('courtroom failure')]
+        before = self.files()
+        with self.assertRaisesRegex(RuntimeError, 'courtroom failure'):
+            mod.install(self.root, self.folder, 1.5)
+        self.assertEqual(self.files(), before)
 
     def test_unknown_or_partial_update_does_not_write(self):
         for index in range(3):
@@ -90,7 +112,7 @@ class UpdateTests(unittest.TestCase):
         for opacity in (0.0, 0.8, 1.0, 0.99):
             with self.subTest(opacity=opacity):
                 mod.install(self.root, self.folder, 1.3, opacity)
-                self.build.assert_called_with(self.clean[0], self.clean[1], 1.3, opacity)
+                self.build.assert_any_call(self.clean[0], self.clean[1], 1.3, opacity)
         mod.uninstall(self.root, self.folder)
         self.assertEqual([(self.root / p).read_bytes() for p in self.paths], self.clean)
 

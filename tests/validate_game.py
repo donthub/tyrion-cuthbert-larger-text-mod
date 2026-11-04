@@ -177,6 +177,58 @@ def validate_evidence_popup(assets, original_assets, scale):
             assert parent(child) == transform
 
 
+def validate_testimony(assets, normal_assets, original_assets, scale, opacity):
+    def inventory(source, prefab):
+        result = {}
+        def visit(go, path):
+            components = [source.objects[c['component']['m_PathID']] for c in go['m_Component']]
+            result[path] = components
+            rect = next(o.read_typetree() for o in components if o.type.name == 'RectTransform')
+            for child in rect['m_Children']:
+                r = source.objects[child['m_PathID']].read_typetree()
+                g = source.objects[r['m_GameObject']['m_PathID']].read_typetree()
+                visit(g, path + '/' + g['m_Name'])
+        visit(source.container[prefab].read_typetree(), '')
+        return result
+    court = inventory(assets, mod.TESTIMONY_PREFAB)
+    normal = inventory(normal_assets, mod.PREFABS[0])
+    def component(items, field):
+        return next(o.read_typetree() for o in items if field in o.read_typetree())
+    def rect(path):
+        return component(court[path], 'm_AnchorMin')
+    # The shared panel, text and metadata have exactly the normal layout.
+    for path in ('/Container', '/Container/Dialogue', '/Container/Nameplate',
+                 '/Container/Character Info', '/Container/Buttons'):
+        actual = rect(path)
+        expected = component(normal[path], 'm_AnchorMin')
+        for field in ('m_AnchorMin', 'm_AnchorMax', 'm_AnchoredPosition', 'm_SizeDelta', 'm_Pivot'):
+            assert actual[field] == expected[field], (path, field)
+    text = component(court['/Container/Dialogue'], 'drawText')
+    assert text['size'] == mod.float32_tree(round(26 * scale, 2))
+    assert text['rememberReadPosition'] == 1
+    assert component(court['/Container'], 'm_Texture')['m_Color']['a'] == mod.float32_tree(opacity)
+    for label, side in (('Press', 0), ('Present', 1)):
+        r = rect('/' + label)
+        assert r['m_AnchorMin'] == r['m_AnchorMax'] == {'x': side, 'y': 1}
+        assert r['m_Pivot'] == {'x': side, 'y': 1}
+        assert r['m_AnchoredPosition'] == {'x': 20 if side == 0 else -20, 'y': -20}
+        assert r['m_Father'] == {'m_FileID': 0, 'm_PathID': next(
+            o.path_id for o in court[''] if o.type.name == 'RectTransform')}
+    for label, side in (('Left', 0), ('Right', 1)):
+        r = rect('/Container/' + label)
+        assert r['m_AnchorMin'] == r['m_AnchorMax'] == {'x': side, 'y': 1}
+        assert r['m_SizeDelta'] == {'x': 180, 'y': 220}
+        assert r['m_AnchoredPosition']['y'] - r['m_SizeDelta']['y'] / 2 == 10
+        assert r['m_AnchoredPosition']['x'] == (90 if side == 0 else -90)
+    # All button logic, images, input hints and fitters remain byte-identical.
+    for path in ('/Press', '/Present', '/Container/Left', '/Container/Right'):
+        for child_path, objects in court.items():
+            if child_path == path or child_path.startswith(path + '/'):
+                for obj in objects:
+                    if obj.type.name != 'RectTransform' or child_path != path:
+                        assert obj.get_raw_data() == original_assets.objects[obj.path_id].get_raw_data()
+
+
 def validate(game):
     source_folder = game / 'TyrionCuthbertLargerTextMod'
     state, originals, previous_state = mod.prepare_install(game, source_folder)
@@ -184,6 +236,7 @@ def validate(game):
     source_hashes = [mod.digest((game / p).read_bytes()) for p in paths]
     import UnityPy
     original_assets = UnityPy.load(originals[0]).assets[0]
+    original_court = UnityPy.load(originals[4]).assets[0]
     reports = []
     with tempfile.TemporaryDirectory(prefix='tyrion-mod-validation-') as temporary:
         root = Path(temporary)
@@ -222,6 +275,8 @@ def validate(game):
             assets = UnityPy.load((root / paths[0]).read_bytes()).assets[0]
             validate_evidence_popup(assets, original_assets, scale)
             validate_story_images(assets, original_assets)
+            court = UnityPy.load((root / paths[4]).read_bytes()).assets[0]
+            validate_testimony(court, assets, original_court, scale, opacity)
             # Check the actual serialized image alpha in both prefab containers.
             for prefab in mod.PREFABS:
                 go = assets.container[prefab].read_typetree()

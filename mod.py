@@ -25,6 +25,9 @@ PLAYER_DATA = Path('Tyrion1_Data/data.unity3d')
 PLAYER_DATA_SHA256 = 'adf2c92b09edb41471cef1c93fd3d436615432690e2085ad690c7fc27edb7ec5'
 PLAYER_SETTINGS_SHA256 = '10b1c6bfd36503544bd3e73b9700c28650d12e396cdb3d8bb097c9a649ce596c'
 RUN_IN_BACKGROUND_OFFSET = 406
+COURT_PATTERN = 'defaultlocalgroup_assets_courtroom_*.bundle'
+COURT_SHA256 = 'bfbac80ef44de6b726c6f8e0b182d63c9e644e9dafd95973ea6e8fa1b3e5edac'
+TESTIMONY_PREFAB = 'Assets/Prefabs/GUI/Dialogue Boxes/Testimony GUI.prefab'
 PATTERN = 'defaultlocalgroup_assets_default_*.bundle'
 PREFABS = ('Assets/Prefabs/GUI/Dialogue Boxes/Dialogue Box.prefab',
            'Assets/Prefabs/GUI/Dialogue Boxes/Narrator Box Variant.prefab')
@@ -88,7 +91,7 @@ def unpack_blocks(bundle, raw):
     return bundle.read_fs(reader)[1].bytes
 
 
-def expand_ui(assets, scale, modified, opacity=DIALOGUE_BACKGROUND_OPACITY):
+def expand_ui(assets, scale, modified, opacity=DIALOGUE_BACKGROUND_OPACITY, testimony=False):
     """Change the inspected prefab paths; retain layout fitters and localization."""
     data = {i: o.read_typetree() for i, o in assets.objects.items()
             if o.type.name in ('GameObject', 'RectTransform', 'Transform', 'MonoBehaviour')}
@@ -159,7 +162,8 @@ def expand_ui(assets, scale, modified, opacity=DIALOGUE_BACKGROUND_OPACITY):
         text_changes.append({'path': p, 'original_size': original_size, 'target_size': target,
                              'auto_size': bool(d.get('m_enableAutoSizing', False))})
 
-    for root in ('Dialogue Box', 'Narrator Box Variant'):
+    roots = ('Testimony GUI',) if testimony else ('Dialogue Box', 'Narrator Box Variant')
+    for root in roots:
         base = root + '/Container'
         # Tint only the background image; child text and controls keep their alpha.
         component(base, 'm_Texture')['m_Color']['a'] = opacity
@@ -178,7 +182,7 @@ def expand_ui(assets, scale, modified, opacity=DIALOGUE_BACKGROUND_OPACITY):
         # Move the whole row so labels, icons and click targets stay aligned.
         # Always start from the original prefab; reinstalling cannot add drift.
         rect(base + '/Buttons')['m_AnchoredPosition']['y'] += TOOLBAR_OFFSET_Y
-        if root == 'Dialogue Box':
+        if root in ('Dialogue Box', 'Testimony GUI'):
             panel = rect(base)
             original_width = panel['m_SizeDelta']['x']
             if original_width != 1554.0:
@@ -198,6 +202,28 @@ def expand_ui(assets, scale, modified, opacity=DIALOGUE_BACKGROUND_OPACITY):
                 r['m_AnchorMax']['x'] += (x + (1.0 - pivot) * width) / original_width
                 r['m_AnchoredPosition']['x'] = 0.0
                 r['m_SizeDelta']['x'] = 0.0
+
+    if testimony:
+        base = 'Testimony GUI/Container'
+        # Reparent complete buttons to the full-screen root, preserving their
+        # fitters, input hints, localization and event references.
+        for label, side in (('Press', 0.0), ('Present', 1.0)):
+            button = rect(base + '/' + label)
+            link = {'m_FileID': 0, 'm_PathID': transforms[paths[base + '/' + label]]}
+            rect(base)['m_Children'].remove(link)
+            rect('Testimony GUI')['m_Children'].append(link)
+            button['m_Father']['m_PathID'] = transforms[paths['Testimony GUI']]
+            button['m_AnchorMin'] = button['m_AnchorMax'] = {'x': side, 'y': 1.0}
+            button['m_Pivot'] = {'x': side, 'y': 1.0}
+            button['m_AnchoredPosition'] = {'x': 20.0 if side == 0 else -20.0, 'y': -20.0}
+        # Keep arrows at their original 180 x 220 size, including the left
+        # arrow's mirrored transform, with 10 units of clearance above the box.
+        for label, side in (('Left', 0.0), ('Right', 1.0)):
+            arrow = rect(base + '/' + label)
+            arrow['m_AnchorMin'] = arrow['m_AnchorMax'] = {'x': side, 'y': 1.0}
+            arrow['m_AnchoredPosition'] = {'x': 90.0 if side == 0 else -90.0, 'y': 120.0}
+            arrow['m_SizeDelta']['y'] = 220.0
+        return text_changes
 
     # Story illustrations (including building plans) share this prefab. Its
     # HeightControlsWidth fitter preserves the runtime sprite's aspect ratio.
@@ -320,7 +346,7 @@ def float32_tree(value):
     return value
 
 
-def build(original, catalog, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
+def build(original, catalog, scale, opacity=DIALOGUE_BACKGROUND_OPACITY, *, testimony=False):
     import UnityPy
     from UnityPy.streams import EndianBinaryReader
     if UnityPy.__version__ != '1.25.4':
@@ -340,7 +366,7 @@ def build(original, catalog, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
     def components(go):
         return [assets.objects[c['component']['m_PathID']] for c in go['m_Component']]
 
-    for prefab in PREFABS:
+    for prefab in ((TESTIMONY_PREFAB,) if testimony else PREFABS):
         go = assets.container[prefab].read_typetree()
         controller = next(o.read_typetree() for o in components(go)
                           if o.type.name == 'MonoBehaviour' and
@@ -378,7 +404,7 @@ def build(original, catalog, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
         changes.append({'prefab': prefab, 'original_size': 26, 'font_size': text['size'],
                         'text_height': height, 'panel_height': panel['m_SizeDelta']['y']})
 
-    ui_changes = expand_ui(assets, scale, modified, opacity)
+    ui_changes = expand_ui(assets, scale, modified, opacity, testimony)
     # Write each staged object once, even when multiple layout adjustments touch it.
     for i, data in modified.items():
         obj = assets.objects[i]
@@ -416,7 +442,7 @@ def build(original, catalog, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
     patched_catalog = catalog[:offset] + struct.pack('<I', new_crc) + catalog[offset + 4:]
     # The local catalog hash is a cache version token. Change it with the catalog.
     hash_token = hashlib.md5(patched_catalog).hexdigest().encode('ascii')
-    report = {'revision': 14, 'scale': scale, 'opacity': opacity,
+    report = {'revision': 15, 'scale': scale, 'opacity': opacity,
               'changes': changes, 'ui_text_changes': ui_changes,
               'verified_objects': len(after.objects), 'added_objects': len(after.objects) - len(originals),
               'modified_objects': len(modified), 'original_crc': old_crc, 'patched_crc': new_crc,
@@ -483,6 +509,22 @@ def include_player_data(root, state, originals):
     return state, originals
 
 
+def include_courtroom(root, state, originals):
+    """Add the inspected courtroom bundle to existing reversible installs."""
+    if not any(Path(item['path']).match(COURT_PATTERN) for item in state['files']):
+        matches = list((root / AA / 'StandaloneWindows64').glob(COURT_PATTERN))
+        if len(matches) != 1:
+            raise RuntimeError('Expected exactly one courtroom asset bundle.')
+        original = matches[0].read_bytes()
+        if digest(original) != COURT_SHA256:
+            raise RuntimeError('Unrecognized courtroom bundle; refusing to patch.')
+        state['files'].append({'path': matches[0].relative_to(root).as_posix(),
+                               'backup': COURT_SHA256 + '/4-' + matches[0].name,
+                               'original_sha256': COURT_SHA256})
+        originals.append(original)
+    return state, originals
+
+
 def check_backups(folder, state):
     for item in state['files']:
         backup = folder / 'backup' / item['backup']
@@ -517,6 +559,7 @@ def prepare_install(root, folder):
             originals = [(folder / 'backup' / item['backup']).read_bytes()
                          for item in previous_state['files']]
             state, originals = include_player_data(root, copy.deepcopy(previous_state), originals)
+            state, originals = include_courtroom(root, state, originals)
             return state, originals, previous_state
 
     matches = list((root / AA / 'StandaloneWindows64').glob(PATTERN))
@@ -537,6 +580,7 @@ def prepare_install(root, folder):
     if hashes in VERIFIED_UPDATES:
         state['game_build'] = VERIFIED_UPDATES[hashes]
     state, originals = include_player_data(root, state, originals)
+    state, originals = include_courtroom(root, state, originals)
     return state, originals, previous_state
 
 
@@ -545,7 +589,9 @@ def install(root, folder, scale, opacity=DIALOGUE_BACKGROUND_OPACITY):
         raise ValueError('--opacity must be between 0.0 and 1.0')
     state, originals, previous_state = prepare_install(root, folder)
     bundle, catalog, token, report = build(originals[0], originals[1], scale, opacity)
-    outputs = [bundle, catalog, token, build_focus_patch(originals[3])]
+    court, catalog, token, court_report = build(originals[4], catalog, scale, opacity, testimony=True)
+    report['testimony'] = court_report
+    outputs = [bundle, catalog, token, build_focus_patch(originals[3]), court]
     report['run_in_background'] = False
     previous = [(root / item['path']).read_bytes() for item in state['files']]
     # Build and validate first. Only then persist the new backup and state.
