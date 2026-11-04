@@ -122,10 +122,8 @@ def expand_ui(assets, scale, modified, opacity=DIALOGUE_BACKGROUND_OPACITY, test
     def component(p, field):
         return change(component_id(p, field))
 
-    def add_component(p, template, field):
-        # Reuse an inspected component type and script reference. Allocate stable
-        # IDs from the original inventory so repeated installation is identical.
-        source = component_id(template, field)
+    def clone_object(source):
+        # Allocate stable IDs so installing again from the backup is identical.
         i = 1
         while i in assets.objects:
             i += 1
@@ -133,10 +131,61 @@ def expand_ui(assets, scale, modified, opacity=DIALOGUE_BACKGROUND_OPACITY, test
         obj.path_id = i
         obj.data = assets.objects[source].get_raw_data()
         assets.objects[i] = obj
-        modified[i] = copy.deepcopy(data[source])
+        data[i] = assets.objects[source].read_typetree()
+        modified[i] = copy.deepcopy(modified.get(source, data[i]))
+        return i
+
+    def add_component(p, template, field):
+        # Reuse an inspected component type and script reference.
+        i = clone_object(component_id(template, field))
         modified[i]['m_GameObject']['m_PathID'] = paths[p]
         change(paths[p])['m_Component'].append({'component': {'m_FileID': 0, 'm_PathID': i}})
         return modified[i]
+
+    def reparent(p, destination):
+        r = rect(p)
+        link = {'m_FileID': 0, 'm_PathID': transforms[paths[p]]}
+        change(r['m_Father']['m_PathID'])['m_Children'].remove(link)
+        rect(destination)['m_Children'].append(link)
+        r['m_Father']['m_PathID'] = transforms[paths[destination]]
+
+    def linked_description(p):
+        """Keep the localized renderer as the source; clone only its graphics."""
+        source_id = component_id(p, 'm_fontSize')
+        source = change(source_id)
+        if source['m_linkedTextComponent']['m_PathID'] or source['parentLinkedComponent']['m_PathID']:
+            raise RuntimeError('Expected an unlinked evidence description.')
+        go = clone_object(paths[p])
+        r = clone_object(transforms[paths[p]])
+        canvas = next(c['component']['m_PathID'] for c in data[paths[p]]['m_Component']
+                      if assets.objects[c['component']['m_PathID']].type.name == 'CanvasRenderer')
+        canvas = clone_object(canvas)
+        target_id = clone_object(source_id)
+        objects = (r, canvas, target_id)
+        modified[go]['m_Name'] = 'Description Continuation'
+        modified[go]['m_Component'] = [
+            {'component': {'m_FileID': 0, 'm_PathID': i}} for i in objects]
+        for i in objects:
+            modified[i]['m_GameObject']['m_PathID'] = go
+        modified[r]['m_Children'] = []
+        change(modified[r]['m_Father']['m_PathID'])['m_Children'].append(
+            {'m_FileID': 0, 'm_PathID': r})
+        target = modified[target_id]
+        target['m_text'] = ''
+        target['parentLinkedComponent'] = {'m_FileID': 0, 'm_PathID': source_id}
+        target['m_overflowMode'] = 0
+        source['m_linkedTextComponent'] = {'m_FileID': 0, 'm_PathID': target_id}
+        source['m_overflowMode'] = 6  # TMP TextOverflowModes.Linked
+        # Auto-sizing the first box would shrink all the text into the space
+        # beside the picture instead of passing the remaining lines below it.
+        source['m_enableAutoSizing'] = False
+        for renderer in (source, target):
+            renderer['m_TextWrappingMode'] = 1
+            renderer['m_VerticalAlignment'] = 256
+        for report in text_changes:
+            if report['path'] == p:
+                report['auto_size'] = False
+        return modified[r]
 
     text_changes = []
 
@@ -267,15 +316,66 @@ def expand_ui(assets, scale, modified, opacity=DIALOGUE_BACKGROUND_OPACITY, test
     viewport['m_AnchorMin']['x'] = 0.075
     viewport['m_AnchorMax']['x'] = 0.925
 
-    # Clues, Spells and People share this description renderer. Keep their
-    # original layouts, grid, headings, fields and buttons byte-for-byte intact.
-    # Long descriptions retain the original lower auto-size bound to fit the
-    # complete entry. Shorter descriptions use the increased maximum size.
-    text('Item Menu/Container/Right/Container/Description', keep_minimum=True)
+    layout_template = 'Add Item Popup/Window/Header'
+
+    def sizing(p, height, flexible=0.0):
+        element = add_component(p, layout_template, 'm_IgnoreLayout')
+        element['m_IgnoreLayout'] = 0
+        element['m_MinHeight'] = element['m_PreferredHeight'] = height
+        element['m_FlexibleHeight'] = flexible
+        return element
+
+    def column_layout(p):
+        layout = add_component(p, 'Add Item Popup/Window/Top/Item Info/Item Fields', 'm_Spacing')
+        layout['m_Spacing'] = 15.0
+        layout['m_ChildAlignment'] = 0
+        layout['m_ChildControlHeight'] = 1
+        return layout
+
+    def fit_detail_rows(fields, split):
+        # Empty labels contribute zero height; wrapped values grow their row.
+        component(fields, 'm_Spacing')['m_ChildControlHeight'] = 1
+        for suffix in ('', ' (1)', ' (2)', ' (3)', ' (4)'):
+            detail_path = fields + '/Item Field' + suffix
+            detail = add_component(detail_path, 'Dialogue Box/Container/Buttons', 'm_Spacing')
+            detail['m_Spacing'] = 0.0
+            detail['m_ChildAlignment'] = 0
+            detail['m_ChildControlWidth'] = detail['m_ChildControlHeight'] = 1
+            detail['m_ChildForceExpandWidth'] = detail['m_ChildForceExpandHeight'] = 0
+            for label, weight in (('Item Field Names', split), ('Item Field Values', 1.0 - split)):
+                element = add_component(detail_path + '/' + label, layout_template, 'm_IgnoreLayout')
+                element['m_IgnoreLayout'] = 0
+                element['m_MinWidth'] = element['m_PreferredWidth'] = 0.0
+                element['m_FlexibleWidth'] = weight
+
+    # The menu shares its item display across Clues, Spells and People. Start
+    # the description under the name beside the picture, then continue across
+    # the full panel. Metadata and the existing View button follow the text.
+    menu = 'Item Menu/Container/Right/Container'
+    menu_info = menu + '/Top/Item Info'
+    menu_description = menu + '/Description'
+    text(menu_description, keep_minimum=True)
+    continuation_rect = linked_description(menu_description)
+    reparent(menu_description, menu_info)
+    reparent(menu_info + '/Fields', menu)
+    reparent(menu_info + '/View Button', menu)
+    column_layout(menu)
+    column_layout(menu_info)
+    # Keep the original square picture size. The lower text box takes the
+    # remaining panel height and retains the menu's long-entry auto-size bound.
+    sizing(menu + '/Top', rect(menu + '/Top/Icon')['m_SizeDelta']['x'])
+    sizing(menu_info + '/Item Name', 50.0)
+    sizing(menu_description, 0.0, 1.0)
+    sizing(menu_info + '/View Button', 50.0)
+    fit_detail_rows(menu_info + '/Fields', 0.33)
+    # Register the new graphics-only object for the layout-element helper.
+    continuation_path = menu + '/Description Continuation'
+    paths[continuation_path] = continuation_rect['m_GameObject']['m_PathID']
+    sizing(continuation_path, 0.0, 1.0)
 
     # Both obtained and updated evidence use this popup, with the controller
-    # replacing the localized heading. Use a fixed-size icon beside a vertical
-    # text column: item name, description, then any visible metadata rows.
+    # replacing the localized heading. Link the text beside the icon to a
+    # full-width continuation, followed by any visible metadata rows.
     popup = 'Add Item Popup/Window'
     panel = rect(popup)
     panel['m_AnchorMin']['x'] = 0.075
@@ -306,50 +406,42 @@ def expand_ui(assets, scale, modified, opacity=DIALOGUE_BACKGROUND_OPACITY, test
     fitter = component(description, 'm_VerticalFit')
     if fitter['m_VerticalFit'] != 2:
         raise RuntimeError('Evidence popup must retain preferred-height fitting.')
-    # The parent now uses TMP's preferred height directly; a second height
-    # controller on the description would fight the layout group.
+    # The first region must stop at the bottom of the icon. A preferred-height
+    # fitter here would expand it and prevent overflow into the continuation.
     fitter['m_Enabled'] = 0
-    description_id = transforms[paths[description]]
-    children = rect(popup)['m_Children']
-    children.remove({'m_FileID': 0, 'm_PathID': description_id})
-    rect(info)['m_Children'].insert(1, {'m_FileID': 0, 'm_PathID': description_id})
-    rect(description)['m_Father']['m_PathID'] = transforms[paths[info]]
+    continuation_rect = linked_description(description)
+    continuation_rect['m_Pivot']['y'] = 1.0
+    reparent(description, info)
+    reparent(fields, popup)
     rect(description)['m_Pivot']['y'] = 1.0
 
-    column = add_component(info, fields, 'm_Spacing')
-    column['m_Spacing'] = 15.0
-    column['m_ChildAlignment'] = 0
-    column['m_ChildControlHeight'] = 1
+    column_layout(info)
+    sizing(info + '/Item Name', 50.0 * scale)
+    sizing(description, 0.0, 1.0)
     row = add_component(popup + '/Top', 'Dialogue Box/Container/Buttons', 'm_Spacing')
     row['m_Spacing'] = 30.0
     row['m_ChildAlignment'] = 0
     row['m_ChildControlWidth'] = row['m_ChildControlHeight'] = 1
-    row['m_ChildForceExpandWidth'] = row['m_ChildForceExpandHeight'] = 0
-    # Fixed-height detail rows reserve space even when their labels are empty.
-    # Measure the text in each row so empty fields collapse and wrapped fields
-    # report their actual height all the way up to the Window's fitter.
-    component(fields, 'm_Spacing')['m_ChildControlHeight'] = 1
-    for suffix in ('', ' (1)', ' (2)', ' (3)', ' (4)'):
-        detail_path = fields + '/Item Field' + suffix
-        detail = add_component(detail_path, 'Dialogue Box/Container/Buttons', 'm_Spacing')
-        detail['m_Spacing'] = 0.0
-        detail['m_ChildAlignment'] = 0
-        detail['m_ChildControlWidth'] = detail['m_ChildControlHeight'] = 1
-        detail['m_ChildForceExpandWidth'] = detail['m_ChildForceExpandHeight'] = 0
-        # Preserve the original 40/60 name/value split while letting the row
-        # measure preferred heights; horizontal anchors alone cannot do both.
-        for label, weight in (('Item Field Names', 0.4), ('Item Field Values', 0.6)):
-            sizing = add_component(detail_path + '/' + label, header, 'm_IgnoreLayout')
-            sizing['m_IgnoreLayout'] = 0
-            sizing['m_MinWidth'] = sizing['m_PreferredWidth'] = 0.0
-            sizing['m_FlexibleWidth'] = weight
+    row['m_ChildForceExpandWidth'] = 0
+    row['m_ChildForceExpandHeight'] = 1
+    fit_detail_rows(fields, 0.4)
     icon = add_component(popup + '/Top/Icon', header, 'm_IgnoreLayout')
     icon['m_IgnoreLayout'] = 0
     icon['m_MinWidth'] = icon['m_PreferredWidth'] = 270.0
     icon['m_MinHeight'] = icon['m_PreferredHeight'] = 270.0
     icon['m_FlexibleWidth'] = icon['m_FlexibleHeight'] = 0.0
     component(popup, 'm_Spacing')['m_ChildControlHeight'] = 1
+    component(popup, 'm_Spacing')['m_Spacing'] = 15.0
     component(popup, 'm_VerticalFit')['m_VerticalFit'] = 2
+    # Horizontal layout groups place siblings from left to right. Put the
+    # whole text column first so the picture sits on the right in both panels.
+    for panel_path in (menu, popup):
+        top = panel_path + '/Top'
+        icon_link = {'m_FileID': 0, 'm_PathID': transforms[paths[top + '/Icon']]}
+        info_link = {'m_FileID': 0, 'm_PathID': transforms[paths[top + '/Item Info']]}
+        if rect(top)['m_Children'] != [icon_link, info_link]:
+            raise RuntimeError('Unexpected evidence picture/text sibling order.')
+        rect(top)['m_Children'] = [info_link, icon_link]
     return text_changes
 
 
@@ -460,7 +552,7 @@ def build(original, catalog, scale, opacity=DIALOGUE_BACKGROUND_OPACITY, *, test
     patched_catalog = catalog[:offset] + struct.pack('<I', new_crc) + catalog[offset + 4:]
     # The local catalog hash is a cache version token. Change it with the catalog.
     hash_token = hashlib.md5(patched_catalog).hexdigest().encode('ascii')
-    report = {'revision': 15, 'scale': scale, 'opacity': opacity,
+    report = {'revision': 17, 'scale': scale, 'opacity': opacity,
               'changes': changes, 'ui_text_changes': ui_changes,
               'verified_objects': len(after.objects), 'added_objects': len(after.objects) - len(originals),
               'modified_objects': len(modified), 'original_crc': old_crc, 'patched_crc': new_crc,

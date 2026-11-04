@@ -17,6 +17,7 @@ echo Install 64-bit Python 3.10 or newer from https://www.python.org/downloads/w
 echo Enable the Python launcher or Add python.exe to PATH, then run this file again.
 goto failed
 :run
+echo Installation in progress... Please wait.
 %DIALOGUE_PY% %DIALOGUE_PY_ARGS% windows_setup.py install --scale "%DIALOGUE_SCALE%" --opacity "%DIALOGUE_OPACITY%"
 if errorlevel 1 goto failed
 echo.

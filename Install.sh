@@ -27,6 +27,8 @@ if [[ ! -f "$script_dir/../Tyrion1_Data/StreamingAssets/aa/catalog.bin" ]]; then
     exit 1
 fi
 
+printf 'Installation in progress... Please wait.\n'
+
 # Keep all packages local; SteamOS system packages and its read-only root stay intact.
 venv_dir="$script_dir/.venv-linux"
 if [[ ! -x "$venv_dir/bin/python" ]]; then

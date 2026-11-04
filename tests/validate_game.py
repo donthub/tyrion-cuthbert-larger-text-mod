@@ -130,7 +130,8 @@ def validate_evidence_popup(assets, original_assets, scale):
     horizontal = component(owner(top), 'm_Spacing')[1]
     assert horizontal['m_Spacing'] == 30.0
     assert horizontal['m_ChildControlWidth'] == horizontal['m_ChildControlHeight'] == 1
-    assert horizontal['m_ChildForceExpandWidth'] == horizontal['m_ChildForceExpandHeight'] == 0
+    assert horizontal['m_ChildForceExpandWidth'] == 0
+    assert horizontal['m_ChildForceExpandHeight'] == 1
     icon_id = display['itemIcon']['m_PathID']
     icon = assets.objects[icon_id].read_typetree()
     icon_rect = rect_of(icon)
@@ -169,7 +170,7 @@ def validate_evidence_popup(assets, original_assets, scale):
     description_rect = rect_of(description)
     assert parent(description_rect) == info
     children = [assets.objects[p['m_PathID']].read_typetree() for p in info['m_Children']]
-    assert children == [name_rect, description_rect, fields]
+    assert children == [name_rect, description_rect]
     assert description_rect not in [assets.objects[p['m_PathID']].read_typetree()
                                     for p in window['m_Children']]
     # Each parent uses preferred heights, so descriptions wrap and push visible
@@ -190,6 +191,95 @@ def validate_evidence_popup(assets, original_assets, scale):
         for link in transform['m_Children']:
             child = assets.objects[link['m_PathID']].read_typetree()
             assert parent(child) == transform
+
+
+def validate_evidence_flow(assets, original_assets, scale):
+    """Verify both linked regions and all references in the actual prefabs."""
+    for prefab, panel_path, is_menu in (
+            ('Item Menu', '/Container/Right/Container', True),
+            ('Add Item Popup', '/Window', False)):
+        inventory = {}
+
+        def visit(go, path):
+            components = {c['component']['m_PathID']:
+                          assets.objects[c['component']['m_PathID']].read_typetree()
+                          for c in go['m_Component']}
+            inventory[path] = components
+            rect = next(d for d in components.values() if 'm_Father' in d)
+            for i, d in components.items():
+                assert d['m_GameObject'] == rect['m_GameObject']
+                # Preserve controllers, localization, images and button actions.
+                if any(k in d for k in ('loadTextOnAwake', 'itemDisplay', 'm_OnClick', 'm_Sprite')):
+                    assert assets.objects[i].get_raw_data() == original_assets.objects[i].get_raw_data()
+            for link in rect['m_Children']:
+                child = assets.objects[link['m_PathID']].read_typetree()
+                assert assets.objects[child['m_Father']['m_PathID']].read_typetree() == rect
+                child_go = assets.objects[child['m_GameObject']['m_PathID']].read_typetree()
+                visit(child_go, path + '/' + child_go['m_Name'])
+
+        visit(assets.container[f'Assets/Prefabs/GUI/Loaded GUIs/{prefab}.prefab'].read_typetree(), '')
+
+        def component(path, field):
+            return next((i, d) for i, d in inventory[panel_path + path].items() if field in d)
+
+        # Horizontal layout must put the description to the left of the image.
+        top = component('/Top', 'm_Children')[1]
+        assert [p['m_PathID'] for p in top['m_Children']] == [
+            component('/Top/Item Info', 'm_Children')[0],
+            component('/Top/Icon', 'm_Children')[0]]
+        assert not component('/Top', 'm_Spacing')[1].get('m_ReverseArrangement', 0)
+
+        source_id, source = component('/Top/Item Info/Description', 'm_fontSize')
+        target_id, target = component('/Description Continuation', 'm_fontSize')
+        assert source['m_linkedTextComponent'] == {'m_FileID': 0, 'm_PathID': target_id}
+        assert target['parentLinkedComponent'] == {'m_FileID': 0, 'm_PathID': source_id}
+        assert source['parentLinkedComponent']['m_PathID'] == target['m_linkedTextComponent']['m_PathID'] == 0
+        assert source['m_overflowMode'] == 6 and target['m_overflowMode'] == 0
+        assert not source['m_enableAutoSizing']
+        assert source['m_text'] == original_assets.objects[source_id].read_typetree()['m_text']
+        assert target['m_text'] == ''
+        assert len(inventory[panel_path + '/Description Continuation']) == 3 + int(is_menu)
+        assert target_id not in original_assets.objects
+        for field in ('m_fontAsset', 'm_sharedMaterial', 'm_fontSize', 'm_fontSizeMax',
+                      'm_fontColor', 'm_TextWrappingMode', 'm_isRichText', 'm_VerticalAlignment'):
+            assert source[field] == target[field], field
+        assert source['m_fontSize'] == mod.float32_tree(24.0 * scale)
+        assert source['m_TextWrappingMode'] == 1
+
+        layout = component('/Top/Item Info/Description', 'm_IgnoreLayout')[1]
+        assert layout['m_MinHeight'] == layout['m_PreferredHeight'] == 0
+        assert layout['m_FlexibleHeight'] == 1
+        assert not layout['m_IgnoreLayout']
+        name_height = component('/Top/Item Info/Item Name', 'm_IgnoreLayout')[1]['m_PreferredHeight']
+        spacing = component('/Top/Item Info', 'm_Spacing')[1]['m_Spacing']
+        icon_height = (component('/Top', 'm_IgnoreLayout')[1]['m_PreferredHeight'] if is_menu
+                       else component('/Top/Icon', 'm_IgnoreLayout')[1]['m_PreferredHeight'])
+        # Even at 2x, there is room for several description lines beside the
+        # image. The rest must flow into the sibling below, never over the icon.
+        assert icon_height - name_height - spacing >= 150
+        outer = component('', 'm_Spacing')[1]
+        assert outer['m_ChildControlWidth'] == outer['m_ChildControlHeight'] == 1
+        assert outer['m_ChildForceExpandHeight'] == 0
+        rect = component('', 'm_Children')[1]
+        names = [assets.objects[assets.objects[p['m_PathID']].read_typetree()['m_GameObject']['m_PathID']]
+                 .read_typetree()['m_Name'] for p in rect['m_Children']]
+        assert names == (['Top', 'Description Continuation', 'Fields', 'View Button'] if is_menu else
+                         ['Header', 'Top', 'Description Continuation', 'Item Fields'])
+        if is_menu:
+            assert target['m_enableAutoSizing']
+            assert target['m_fontSizeMin'] == 18.0
+            lower = component('/Description Continuation', 'm_IgnoreLayout')[1]
+            assert lower['m_PreferredHeight'] == 0 and lower['m_FlexibleHeight'] == 1
+            for suffix in ('', ' (1)', ' (2)', ' (3)', ' (4)'):
+                path = '/Fields/Item Field' + suffix
+                assert component(path, 'm_Spacing')[1]['m_ChildControlHeight'] == 1
+                for label in ('Item Field Names', 'Item Field Values'):
+                    assert component(path + '/' + label, 'm_IgnoreLayout')[1]['m_PreferredHeight'] == -1
+        else:
+            assert not target['m_enableAutoSizing']
+            # Let the continuation report its text's preferred height directly.
+            assert not any('m_IgnoreLayout' in d or 'm_VerticalFit' in d
+                           for d in inventory[panel_path + '/Description Continuation'].values())
 
 
 def validate_testimony(assets, normal_assets, original_assets, scale, opacity):
@@ -274,7 +364,7 @@ def validate(game):
             installed = mod.load_state(folder)
             report = installed['report']
             assert report['opacity'] == opacity
-            assert report['added_objects'] == 18
+            assert report['added_objects'] == 50
             assert report['run_in_background'] is False
             player_env = UnityPy.load((root / mod.PLAYER_DATA).read_bytes())
             managers = next(a for a in player_env.assets if a.name == 'globalgamemanagers')
@@ -289,6 +379,7 @@ def validate(game):
             # Loading bytes avoids holding a Windows file handle across uninstall.
             assets = UnityPy.load((root / paths[0]).read_bytes()).assets[0]
             validate_evidence_popup(assets, original_assets, scale)
+            validate_evidence_flow(assets, original_assets, scale)
             validate_story_images(assets, original_assets)
             court = UnityPy.load((root / paths[4]).read_bytes()).assets[0]
             validate_testimony(court, assets, original_court, scale, opacity)

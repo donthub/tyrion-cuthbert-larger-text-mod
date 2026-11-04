@@ -16,8 +16,8 @@ These changes include:
 - Gameplay popup images, including building plans, shrink proportionally to fit above the enlarged dialogue and narrator boxes.
 - Preserve dialogue and narration text when returning from Text log.
 - Text log text size
-- Description texts in evidence panels
-- Text in the “Obtained evidence!” and “Evidence updated!” notifications, with a wider panel and the description directly below the item name beside the picture. Detail fields follow the description. The panel height fits the text and picture; empty detail rows no longer reserve extra height.
+- Description texts in evidence panels, starting to the left of the picture and continuing across the full width below it. Detail fields and the View button follow the description. Clues, Spells and People share this layout.
+- Text in the “Obtained evidence!” and “Evidence updated!” notifications, with a wider panel, the picture on the right, and descriptions that flow to its left and below it. Detail fields follow the description. The panel height fits the text and picture; empty detail rows no longer reserve extra height.
 - Pause when the game loses focus, preventing background inputs from advancing dialogue or activating controls. Switch back to the game to resume.
 
 Saves are not affected by this mod.
@@ -78,7 +78,9 @@ The installer reparses the rebuilt bundle, checks all objects and unchanged reso
 
 Popup image validation checks clearance above both dialogue panels at each tested scale, the unchanged top margin and aspect-ratio fitter, and preservation of the evidence menu's separate image viewer. In-game visual verification of building plans and other story illustrations is still needed.
 
-Evidence notification validation checks that detail rows use their text's preferred height instead of a fixed height, while retaining the panel width and the 40/60 name/value column split. In-game verification is still needed for short and long entries in both notification variants, including entries with empty or wrapped detail fields.
+Evidence descriptions use TextMesh Pro's [Linked overflow mode](https://docs.unity.cn/Packages/com.unity.textmeshpro@3.2/manual/TMPObjectUIText.html#wrapping-and-overflow) to continue from the region beside the picture into a full-width region below it. The game still supplies localized text to the original renderer; the continuation contains only graphics components and receives the remaining text automatically. Notifications grow to fit the continuation. The evidence menu keeps its existing panel bounds and allows the lower text region to shrink to the original minimum font size for especially long entries.
+
+Evidence validation checks both text links, matching fonts, space beside the image at each scale, hierarchy ownership, and preservation of localization, controllers, images and button actions. Detail rows use their text's preferred height instead of a fixed height, preserving the menu's 33/67 and notifications' 40/60 name/value column splits. In-game verification is still needed: select short and long clues, switch repeatedly between them, open and close the evidence page, and trigger both notification variants. Check that the continuation clears for shorter entries, that no text is repeated or missing at the transition below the picture, and that populated detail fields and the View button remain usable. Also check Spells and People, which share the menu layout, at the largest text scale.
 
 The Text log fix enables Super Text Mesh's [`rememberReadPosition`](https://kaiclavier.com/docs/SuperTextMesh.html#rememberReadPosition) on the dialogue and narrator renderers. This preserves their drawing position when disabled and re-enabled, while leaving the game's manual text playback, timing and events unchanged. Asset validation checks both prefabs at every tested scale and opacity. In-game verification is still needed: open and close Text log repeatedly on a completed line and during its reveal, then advance to the next line; repeat for narration. The previous text should return and subsequent lines should play normally.
 
