@@ -2,6 +2,8 @@
 // canvas units and are derived from the game's original values (passed in),
 // never from values the mod already changed.
 #pragma once
+#include <functional>
+
 #include "ui.h"
 
 namespace ltm::layout {
@@ -16,6 +18,8 @@ constexpr float kToolbarRaise = 20.0f * 1080.0f / 1440.0f;
 constexpr float kDialogueSideMargin = 0.025f;
 // Space kept between the character-info row and the first dialogue line.
 constexpr float kInfoToDialogueGap = 12.0f;
+// Space kept between a panel and the screen edge.
+constexpr float kScreenMargin = 14.0f;
 
 float round_to(float value, float step);  // nearest multiple
 float ceil_to(float value, float step);   // next multiple up
@@ -64,5 +68,20 @@ float heading_height(float original_height, double factor, float panel_top_ancho
 
 // Rounds a font size to 2 decimals like the original mod.
 float scaled_font(float size, double factor);
+
+// Shrink to fit (FR-UI-0d). Text never shrinks below the size the game itself
+// uses: its original size, or the lower bound of its own automatic sizing.
+float fit_floor(const TmpSize &original);
+// Enlarged by `factor`, with automatic sizing down to fit_floor, so the text
+// shrinks only when it would not fit its own rect.
+TmpSize fit_tmp(const TmpSize &original, double factor);
+// The largest size in [lo, hi] for which fits(size) holds, to within `step`
+// (assumes smaller sizes fit at least as well). Returns hi when hi fits and lo
+// when even lo doesn't. Calls fits() only with sizes in [lo, hi].
+float largest_fitting(float hi, float lo, const std::function<bool(float)> &fits, float step = 0.5f);
+// Tallest a panel may become while it stays on screen with kScreenMargin, given
+// its vertical anchor (fraction of the screen), anchored position and pivot.
+// A pivot at the top grows downwards, at the bottom upwards.
+float max_panel_height(float anchor_y, float pos_y, float pivot_y);
 
 }  // namespace ltm::layout

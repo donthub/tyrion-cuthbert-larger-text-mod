@@ -3,7 +3,7 @@
 
 | | |
 | --- | --- |
-| Status | Agreed draft, rev. 2: runtime injection (decisions in §14) |
+| Status | Agreed draft, rev. 3: runtime injection, shrink to fit (decisions in §14) |
 | Date | 2026-11-14 |
 | Source | Functionality of the existing `TyrionCuthbertLargerTextMod` project |
 | Purpose | Rebuild the mod from scratch. This document says **what** the mod must do; it does not prescribe code structure, implementation language, libraries or loader. |
@@ -68,14 +68,15 @@ All UI changes **shall** be scaled by the chosen *scale*. At runtime they **shal
 - **FR-UI-0a** Each change shall be applied to every relevant UI instance, including instances created after startup (scene loads, instantiated prefabs, pooled objects being reused). It shall be applied before or at the moment the instance first becomes visible, so the player never sees the unmodified layout flash briefly.
 - **FR-UI-0b** Each change shall be applied exactly once per instance. Repeated activation, scene reloads or re-entering a menu shall never compound the changes.
 - **FR-UI-0c** Each feature shall be independently switchable in the config (FR-RT-4).
+- **FR-UI-0d** **Shrink to fit.** Text that would extend outside its container at the enlarged size shall be scaled down until it fits. The container is the area the text has to stay in: its own text rectangle, or the fixed-size panel or screen area that holds it. Containers that grow with their contents and scroll, such as the text log, already fit. The text shall shrink only as far as needed and only while it doesn't fit; shorter text keeps the full enlarged size. It shall never become smaller than the size the game itself uses for it (its original size, or the lower bound of the game's own automatic sizing). Text that doesn't fit even at that size behaves as in the unmodded game. Text split into several parts (FR-UI-22, FR-UI-33) shrinks as a whole, so all parts keep the same size (FR-UI-23). Shrinking shall not change how the text is revealed, its timing or its events.
 
 ### 3.1 Dialogue and narrator boxes
-- **FR-UI-1** The dialogue text in the normal dialogue box and in the narrator box shall be enlarged by the scale factor.
+- **FR-UI-1** The dialogue text in the normal dialogue box and in the narrator box shall be enlarged by the scale factor. A line that doesn't fit the enlarged text area shrinks to fit (FR-UI-0d).
 - **FR-UI-2** The height of the text area and the panel shall grow so that the larger, more frequently wrapping text fits. The height growth shall be at least proportional to the extra wrapping (roughly the square of the scale). The panel shall also stay tall enough for the character-info rows above the dialogue text.
 - **FR-UI-3** The normal dialogue panel shall be widened to span the screen width minus a small, equal margin on each side.
 - **FR-UI-4** When the panel is widened, its child elements (nameplate, character info, dialogue text, toolbar buttons) shall keep their relative horizontal position and proportion on the background artwork. They shall be stretched by resizing rectangles, never by scaling transforms, so glyphs keep their shape.
-- **FR-UI-5** The speaker nameplate text shall be enlarged. The nameplate's height shall follow the panel's vertical stretch, because the nameplate background is part of the panel artwork.
-- **FR-UI-6** The character-info labels (Occupation, Age, Arcane Art) shall be enlarged, together with their row heights, and repositioned to match the taller panel.
+- **FR-UI-5** The speaker nameplate text shall be enlarged, and shrink to fit the nameplate for long names (FR-UI-0d). The nameplate's height shall follow the panel's vertical stretch, because the nameplate background is part of the panel artwork.
+- **FR-UI-6** The character-info labels (Occupation, Age, Arcane Art) shall be enlarged, together with their row heights, and repositioned to match the taller panel. Long labels shrink to fit their rows (FR-UI-0d).
 - **FR-UI-7** The toolbar button row shall move as one unit, so labels, icons and click targets stay aligned.
 - **FR-UI-8** The opacity of the panel background shall be configurable. Only the background image shall be affected; text, nameplate and controls shall keep their own opacity.
 
@@ -97,7 +98,7 @@ All UI changes **shall** be scaled by the chosen *scale*. At runtime they **shal
 - **FR-UI-19** When the player opens and closes the text log, the current dialogue or narration line shall reappear as it was, both for a completed line and for one still being revealed. Playback of later lines, its timing and its events shall not change.
 
 ### 3.5 Evidence menu (Clues, Spells, People)
-- **FR-UI-20** The description text in the evidence menu shall be enlarged. Automatic font shrinking shall be disabled for it.
+- **FR-UI-20** The description text in the evidence menu shall be enlarged. The game's own automatic font shrinking shall be disabled for it. Instead, when the description, the detail fields and the *View* button together don't fit in the panel, the description shrinks until they do (FR-UI-0d).
 - **FR-UI-21** The picture shall be on the **right**, and the item name and description on its left.
 - **FR-UI-22** The description shall start in the area to the left of the picture and continue across the **full panel width** below it. No text shall be repeated or lost at the transition, and the continuation shall be cleared when a shorter entry is shown.
 - **FR-UI-23** Both description regions shall use the same font and font size.
@@ -114,7 +115,7 @@ All UI changes **shall** be scaled by the chosen *scale*. At runtime they **shal
 - **FR-UI-32** The item name, description and detail rows shall be enlarged.
 - **FR-UI-33** The picture shall be on the right, at a fixed square size. The description shall flow to its left and then continue full-width below it, as in FR-UI-22 to FR-UI-24.
 - **FR-UI-34** Detail fields shall follow below the description and use the full width. Rows shall take their preferred height, keep the original name/value split, and take **no** height when empty.
-- **FR-UI-35** The panel height shall fit its contents: the heading, the picture or text block (whichever is taller), the continuation and the populated detail rows.
+- **FR-UI-35** The panel height shall fit its contents: the heading, the picture or text block (whichever is taller), the continuation and the populated detail rows. The panel shall stay on the screen: when its contents would take it past the screen edge, the description shrinks until they fit (FR-UI-0d).
 
 ### 3.7 Pause when unfocused
 - **FR-UI-36** The game shall not keep running while another application has focus, so inputs sent while the game is in the background can't advance dialogue or activate controls. Switching back to the game shall resume it normally.
@@ -280,7 +281,8 @@ All UI changes **shall** be scaled by the chosen *scale*. At runtime they **shal
 ### 12.1 Automated tests (no game files needed)
 These tests shall run in CI. They shall cover:
 - config parsing: defaults, valid values, out-of-range, malformed and missing values, and unknown keys being kept;
-- layout calculations implemented as pure functions (panel heights, margins, image clearance, column splits) at several scales;
+- layout calculations implemented as pure functions (panel heights, margins, image clearance, column splits, shrink-to-fit sizes and limits) at several scales;
+- shrink to fit (FR-UI-0d): text that fits keeps the enlarged size, text that doesn't shrinks just enough, never below the game's own size, and split text keeps one size in all parts;
 - the runtime feature framework, using stand-in UI structures: each feature applies once and never compounds; a structure mismatch skips only that feature without leaving partial changes; an exception in one feature leaves the others working; the master switch off means no changes;
 - the installer: fresh install, repeat install, settings change, refusal while the game runs, original-mod detection, existing foreign files not overwritten, rollback on a write failure, manifest correctness;
 - uninstall and status: clean removal, pre-existing files kept, externally changed files reported, incomplete installations detected;
@@ -294,10 +296,10 @@ These tests shall run in CI. They shall cover:
 - **Install, uninstall and verify:** after uninstall, Steam's *Verify integrity of game files* finds nothing to repair, and the game folder contents match those before install.
 
 ### 12.3 Manual in-game checklist
-- Dialogue, narrator and cross-examination boxes: check the layout, and that Press, Present and the arrows respond to input.
+- Dialogue, narrator and cross-examination boxes: check the layout, and that Press, Present and the arrows respond to input. At scale 2.0, check that the longest lines, names and character-info labels shrink to stay inside the box, that short lines keep the full size, and that the reveal of a shrunk line plays normally.
 - Text log: open and close it repeatedly on a completed line and during a line's reveal, for both dialogue and narration. Check that the next line plays normally.
 - Evidence menu: switch between short and long clues repeatedly, open and close the evidence page, and check Spells and People at the largest scale. Check that no text is repeated or missing where the description continues below the picture, and that the detail fields and View button work.
-- Notifications: trigger both "Obtained" and "Updated" variants with short and long text.
+- Notifications: trigger both "Obtained" and "Updated" variants with short and long text. At scale 2.0, check that a long entry stays on the screen.
 - Story images and building plans: check that they don't overlap the dialogue or narrator box.
 - Scene changes and reloading a save: check the changes are still applied and haven't compounded.
 - Focus: switch away during dialogue, press the advance and menu inputs, then switch back. Check that dialogue hasn't advanced and that controls work again. Do this on Windows and on Proton / Steam Deck.
@@ -309,8 +311,8 @@ These tests shall run in CI. They shall cover:
 - **Proton:** loading the runtime component under Proton may need a one-time Steam launch option or similar step (FR-RT-2).
 - **Future game and engine updates:** an update to the engine or loader-relevant parts of the game may stop the runtime component from loading until the mod is updated. UI structure changes only disable the affected features (FR-GU-3).
 - **Steam file verification** may remove files the mod added; re-run Install (FR-GU-2).
-- Not every language and screen resolution has been visually tested. Extremely long text may overflow its panel; the workaround is a smaller scale.
-- The evidence menu's outer bounds don't change, so very long descriptions may exceed the available space.
+- Not every language and screen resolution has been visually tested. Text shrinks to fit (FR-UI-0d), but never below the game's own size; text that doesn't fit even then overflows as in the unmodded game. The workaround is a smaller scale.
+- The evidence menu's outer bounds don't change, so very long descriptions shrink, at most down to the game's own minimum size.
 - Larger settings take up more screen space.
 - Other mods that change the same UI elements, or use an incompatible loader, are not supported.
 - The original (asset-patching) version of this mod is not migrated. Its users shall uninstall it with its own uninstaller, or use Steam's *Verify integrity of game files*, before installing the new version (FR-INST-6). The original mod's updater is not required to be able to update to the new implementation.
@@ -331,6 +333,7 @@ These questions were raised while the spec was being written and have been agree
 | D-7 | Loader | How the runtime component is loaded is left to implementation (§1.3, NFR-7). |
 | D-8 | Settings | A config file, read at game start; edited directly or written by Install (FR-RT-3 … FR-RT-5, FR-INST-1). |
 | D-9 | Structure mismatch | Skip only the affected feature and log the reason; everything else keeps working (FR-RT-6, FR-GU-3). |
+| D-10 | Text that doesn't fit | Text that would leave its container at the enlarged size shrinks just enough to fit, never below the game's own size (FR-UI-0d). |
 
 ---
 

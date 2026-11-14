@@ -10,6 +10,8 @@ Makes the game's text easier to read on small screens such as the Steam Deck:
 - **"Obtained / updated evidence" popup:** wider and larger, with the same picture-and-description layout.
 - **Pause when unfocused:** the game no longer reacts to input while another window has focus.
 
+Text that would not fit its box at the larger size (a very long line, name or description) is scaled down just enough to fit, but never below the game's own size.
+
 The mod works at runtime: a small loader (`version.dll`) applies the changes in memory when the game starts. **No game file is modified**, save files are never touched, and Uninstall removes everything the mod added.
 
 ## Prerequisites
@@ -113,13 +115,13 @@ The runtime writes `TyrionCuthbertLargerTextMod/runtime.log` at every game start
 | --- | --- |
 | No `runtime.log` after starting the game | The loader was not loaded. On Steam Deck/Linux, check the launch option. On Windows, check that `version.dll` is in the game folder (Status). |
 | A feature is `skipped` | A game update changed that menu. The rest keeps working; check for a mod update. |
-| Text too large or overflowing | Re-run Install with a smaller scale, e.g. `Install 1.3`. |
+| Text too large, or long text shrunk too often | Re-run Install with a smaller scale, e.g. `Install 1.3`. |
 | Want the original look back temporarily | Set `enabled = false` in `config.ini`. |
 
 ## Known limitations
 
-- Not every language and resolution has been checked visually. Extremely long text may overflow; use a smaller scale.
-- The evidence menu keeps its outer size, so very long descriptions may run out of room.
+- Not every language and resolution has been checked visually. Long text shrinks to fit, but never below the game's own size; text that doesn't fit even then overflows as in the unmodded game. Use a smaller scale if that happens.
+- The evidence menu keeps its outer size, so very long descriptions are shown smaller.
 - Other mods that use their own `version.dll`, or that change the same UI, are not supported. Install refuses to overwrite a foreign `version.dll`.
 - The loader uses the game engine's IL2CPP interface. A future Unity upgrade of the game could stop the mod from loading until it is updated. The game stays playable either way.
 

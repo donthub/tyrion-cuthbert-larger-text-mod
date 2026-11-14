@@ -22,6 +22,8 @@ struct Node {
     std::map<Comp, std::map<Prop, double>> comps;
     Node *linked = nullptr;
     int text_version = 0;
+    // Rendered text height per font-size unit (0: a fixed 40), to test fitting.
+    double text_lines = 0;
 };
 
 class FakeUi : public Ui {
@@ -128,7 +130,7 @@ class FakeUi : public Ui {
         Node *n = N(go);
         if (!n->comps.count(c)) throw EngineError("no component");
         if (p == Prop::TmpOverflowing) return overflowing.count(n) ? 1 : 0;
-        if (p == Prop::TmpRenderedHeight) return 40;
+        if (p == Prop::TmpRenderedHeight) return n->text_lines > 0 ? n->comps[c][Prop::TmpFontSize] * n->text_lines : 40;
         if (p == Prop::TmpPreferredHeight) return n->comps[c][Prop::TmpFontSize] * 1.2;
         auto &props = n->comps[c];
         auto it = props.find(p);
@@ -178,6 +180,16 @@ class FakeUi : public Ui {
     const void *text_identity(Handle go, Comp) override { return reinterpret_cast<const void *>(N(go)->comps.size() + N(go)->text_version * 1000); }
     void show_text_until(Handle go, double t) override { shown_until[N(go)] = t; }
     std::map<Node *, double> shown_until;
+    int enum_value(Handle go, Comp c, Prop p, const std::string &member) override {
+        if (!N(go)->comps.count(c)) throw EngineError("no component");
+        // SuperTextMesh.BestFitMode in declaration order.
+        static const char *const modes[] = {"Off", "Always", "OverLimit", "SquishAlways",
+                                            "SquishOverLimit", "MultilineEven", "MultilineFull"};
+        if (p == Prop::StmBestFit)
+            for (int i = 0; i < 7; ++i)
+                if (member == modes[i]) return i;
+        throw Mismatch("no enum value " + member);
+    }
 
     std::set<Node *> overflowing;
 

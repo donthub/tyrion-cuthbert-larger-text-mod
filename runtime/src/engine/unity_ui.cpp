@@ -35,7 +35,8 @@ const ClassName kCompClasses[] = {
 };
 static_assert(sizeof(kCompClasses) / sizeof(kCompClasses[0]) == static_cast<size_t>(Comp::Count), "classes");
 
-enum class Kind { Float, Bool, Int, Field, Special };
+// Field* kinds are SuperTextMesh fields (it has no properties for them).
+enum class Kind { Float, Bool, Int, Field, FieldBool, FieldInt, Special };
 
 struct Accessor {
     const char *getter, *setter;
@@ -54,10 +55,13 @@ Accessor accessor(Prop p) {
         case Prop::TmpPreferredHeight: return {"get_preferredHeight", nullptr, Kind::Float};
         case Prop::StmSize: return {"size", "size", Kind::Field};
         case Prop::StmCharacterSpacing: return {"characterSpacing", "characterSpacing", Kind::Field};
-        case Prop::StmRememberReadPosition: return {"rememberReadPosition", "rememberReadPosition", Kind::Field};
-        case Prop::StmReading: return {"reading", nullptr, Kind::Field};
+        case Prop::StmRememberReadPosition: return {"rememberReadPosition", "rememberReadPosition", Kind::FieldBool};
+        case Prop::StmReading: return {"reading", nullptr, Kind::FieldBool};
         case Prop::StmReadTime: return {"currentReadTime", nullptr, Kind::Field};
         case Prop::StmTotalReadTime: return {"totalReadTime", nullptr, Kind::Field};
+        case Prop::StmBestFit: return {"bestFit", "bestFit", Kind::FieldInt};
+        case Prop::StmUiLimit: return {"uiLimit", "uiLimit", Kind::FieldBool};
+        case Prop::StmVerticalLimitMode: return {"verticalLimitMode", nullptr, Kind::FieldInt};
         case Prop::LgSpacing: return {"get_spacing", "set_spacing", Kind::Float};
         case Prop::LgChildAlignment: return {"get_childAlignment", "set_childAlignment", Kind::Int};
         case Prop::LgControlWidth: return {"get_childControlWidth", "set_childControlWidth", Kind::Bool};
@@ -254,13 +258,20 @@ double UnityUi::get(Handle go, Comp c, Prop p) {
         case Kind::Float: return unbox<float>(invoke(method(k, a.getter, 0), comp));
         case Kind::Bool: return unbox<bool>(invoke(method(k, a.getter, 0), comp)) ? 1.0 : 0.0;
         case Kind::Int: return unbox<int32_t>(invoke(method(k, a.getter, 0), comp));
-        case Kind::Field: {
+        case Kind::Field:
+        case Kind::FieldBool:
+        case Kind::FieldInt: {
             FieldInfo *f = il2cpp_class_get_field_from_name(k, a.getter);
-            if (!f) throw EngineError(std::string("field ") + a.getter + " is unavailable");
-            if (p == Prop::StmRememberReadPosition || p == Prop::StmReading) {
+            if (!f) throw Mismatch(std::string("field ") + a.getter + " is unavailable");
+            if (a.kind == Kind::FieldBool) {
                 bool v = false;
                 il2cpp_field_get_value(comp, f, &v);
                 return v ? 1.0 : 0.0;
+            }
+            if (a.kind == Kind::FieldInt) {  // also enums with a 32-bit underlying type
+                int32_t v = 0;
+                il2cpp_field_get_value(comp, f, &v);
+                return v;
             }
             float v = 0;
             il2cpp_field_get_value(comp, f, &v);
@@ -297,11 +308,16 @@ void UnityUi::set(Handle go, Comp c, Prop p, double value) {
             invoke(method(k, a.setter, 1), comp, {&v});
             return;
         }
-        case Kind::Field: {
+        case Kind::Field:
+        case Kind::FieldBool:
+        case Kind::FieldInt: {
             FieldInfo *f = il2cpp_class_get_field_from_name(k, a.setter);
-            if (!f) throw EngineError(std::string("field ") + a.setter + " is unavailable");
-            if (p == Prop::StmRememberReadPosition) {
+            if (!f) throw Mismatch(std::string("field ") + a.setter + " is unavailable");
+            if (a.kind == Kind::FieldBool) {
                 bool v = value != 0.0;
+                il2cpp_field_set_value(comp, f, &v);
+            } else if (a.kind == Kind::FieldInt) {
+                int32_t v = static_cast<int32_t>(std::lround(value));
                 il2cpp_field_set_value(comp, f, &v);
             } else {
                 float v = static_cast<float>(value);
@@ -423,6 +439,21 @@ void UnityUi::show_text_until(Handle go, double read_time) {
     Object *comp = component(go, Comp::Stm);
     float t = static_cast<float>(read_time);
     invoke(method(il2cpp_object_get_class(comp), "SetMesh", 1, {"System.Single"}), comp, {&t});
+}
+
+int UnityUi::enum_value(Handle go, Comp c, Prop p, const std::string &member) {
+    Accessor a = accessor(p);
+    if (a.kind != Kind::FieldInt) throw EngineError(std::string(prop_name(p)) + " is not an enum field");
+    Object *comp = component(go, c);
+    FieldInfo *f = il2cpp_class_get_field_from_name(il2cpp_object_get_class(comp), a.getter);
+    if (!f) throw Mismatch(std::string("field ") + a.getter + " is unavailable");
+    Class *e = il2cpp_class_from_type(il2cpp_field_get_type(f));
+    FieldInfo *constant = e ? il2cpp_class_get_field_from_name(e, member.c_str()) : nullptr;
+    if (!constant) throw Mismatch(std::string(a.getter) + " has no value " + member);
+    // Enum members are literal static fields; IL2CPP returns their constant value.
+    int32_t v = 0;
+    il2cpp_field_static_get_value(constant, &v);
+    return v;
 }
 
 }  // namespace ltm::engine

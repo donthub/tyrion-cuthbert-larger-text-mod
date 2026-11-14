@@ -65,6 +65,9 @@ enum class Prop {
     StmReading,          // read-only
     StmReadTime,         // read-only: current reveal position
     StmTotalReadTime,    // read-only: time when fully revealed
+    StmBestFit,          // enum SuperTextMesh.BestFitMode
+    StmUiLimit,          // use the rect height as the vertical limit
+    StmVerticalLimitMode,  // read-only, enum SuperTextMesh.VerticalLimitMode
     // Graphic
     GraphicAlpha,
     // HorizontalOrVerticalLayoutGroup
@@ -158,6 +161,9 @@ class Ui {
     // SuperTextMesh: redraws the text as revealed up to `read_time`, without
     // starting, stopping or firing any reading events.
     virtual void show_text_until(Handle go, double read_time) = 0;
+    // The value of a member of an enum-typed property's enum, e.g. a
+    // SuperTextMesh.BestFitMode value by name. Throws Mismatch when absent.
+    virtual int enum_value(Handle go, Comp c, Prop p, const std::string &member) = 0;
 };
 
 }  // namespace ltm

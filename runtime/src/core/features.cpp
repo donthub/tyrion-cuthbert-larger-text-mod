@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <map>
 
 namespace ltm {
@@ -67,6 +68,17 @@ const char *const kInfoLabels[] = {"Occupation", "Age", "Arcane Art"};
 
 enum class BoxKind { Dialogue, Narrator, Testimony };
 
+// Which kind of box an instance is. A box without a container counts as a
+// dialogue box, so the dialogue unit's validation reports it.
+BoxKind box_kind(Ui &ui, Handle root) {
+    if (ui.has(root, Comp::TestimonyPrompt)) return BoxKind::Testimony;
+    Handle container = ui.find(root, "Container");
+    if (!container) return BoxKind::Dialogue;
+    RectData r = ui.rect(container);
+    bool full_width = r.anchorMin.x == 0.0f && r.anchorMax.x == 1.0f;
+    return full_width ? BoxKind::Narrator : BoxKind::Dialogue;
+}
+
 struct BoxOriginals {
     RectData container, dialogue, nameplate, info, buttons;
     RectData labels[3];
@@ -81,16 +93,7 @@ class DialogueBoxUnit : public Unit {
     DialogueBoxUnit(const char *key, const char *config_key, BoxKind kind)
         : Unit(key, config_key, Target::DialogueBox), kind_(kind) {}
 
-    bool matches(Ui &ui, Handle root) override {
-        bool testimony = ui.has(root, Comp::TestimonyPrompt);
-        if (kind_ == BoxKind::Testimony) return testimony;
-        if (testimony) return false;
-        Handle container = ui.find(root, "Container");
-        if (!container) return kind_ == BoxKind::Dialogue;  // validate reports it
-        RectData r = ui.rect(container);
-        bool full_width = r.anchorMin.x == 0.0f && r.anchorMax.x == 1.0f;
-        return kind_ == BoxKind::Narrator ? full_width : !full_width;
-    }
+    bool matches(Ui &ui, Handle root) override { return box_kind(ui, root) == kind_; }
 
     void validate(Ui &ui, Handle root) override {
         Handle container = need(ui, root, "Container", {Comp::RawImage});
@@ -194,7 +197,8 @@ class DialogueBoxUnit : public Unit {
         RectData n = horizontal(o.nameplate);
         n.sizeDelta.y = o.nameplate.sizeDelta.y * stretch;
         tx.set_rect(ui.find(root, "Container/Nameplate"), n);
-        write_tmp(tx, ui.find(root, "Container/Nameplate/Text"), layout::scale_tmp(o.nameplate_text, s, false));
+        // FR-UI-0d: long names and labels shrink to fit their rects.
+        write_tmp(tx, ui.find(root, "Container/Nameplate/Text"), layout::fit_tmp(o.nameplate_text, s));
 
         // FR-UI-6
         RectData info = horizontal(o.info);
@@ -203,7 +207,7 @@ class DialogueBoxUnit : public Unit {
         tx.set_rect(ui.find(root, "Container/Character Info"), info);
         for (int i = 0; i < 3; ++i) {
             Handle label = ui.find(root, std::string("Container/Character Info/") + kInfoLabels[i]);
-            write_tmp(tx, label, layout::scale_tmp(o.label_text[i], s, false));
+            write_tmp(tx, label, layout::fit_tmp(o.label_text[i], s));
             RectData l = o.labels[i];
             l.sizeDelta.y = o.labels[i].sizeDelta.y * static_cast<float>(s);
             tx.set_rect(label, l);
@@ -258,6 +262,47 @@ class DialogueBoxUnit : public Unit {
 
     BoxKind kind_;
     std::optional<BoxOriginals> orig_;
+};
+
+// FR-UI-0d: dialogue text that doesn't fit the enlarged text area shrinks
+// until it does. Super Text Mesh does this itself with its multiline best fit,
+// against the rect height (uiLimit). It works on the whole line when the line
+// is built, so the reveal, its timing and its events are unchanged. Text that
+// fits stays at the enlarged size. A separate unit, so a Super Text Mesh change
+// only loses the fitting, not the larger boxes.
+class DialogueFitUnit : public Unit {
+  public:
+    // The best-fit mode that shrinks wrapped text to the rect's width and height.
+    static constexpr const char *kMode = "MultilineFull";
+
+    DialogueFitUnit(const char *key, const char *config_key, std::initializer_list<BoxKind> kinds)
+        : Unit(key, config_key, Target::DialogueBox), kinds_(kinds) {}
+
+    bool matches(Ui &ui, Handle root) override {
+        BoxKind k = box_kind(ui, root);
+        return std::find(kinds_.begin(), kinds_.end(), k) != kinds_.end();
+    }
+
+    void validate(Ui &ui, Handle root) override {
+        Handle text = need(ui, root, "Container/Dialogue", {Comp::Stm});
+        int mode = ui.enum_value(text, Comp::Stm, Prop::StmBestFit, kMode);
+        int current = static_cast<int>(ui.get(text, Comp::Stm, Prop::StmBestFit));
+        if (current == mode && ui.get(text, Comp::Stm, Prop::StmUiLimit) != 0.0) throw AlreadyApplied();
+        expect(current == 0, "dialogue text already uses best fit mode " + std::to_string(current));
+        // With a vertical limit mode the game pages or cuts long text itself.
+        expect(ui.get(text, Comp::Stm, Prop::StmVerticalLimitMode) == 0.0, "dialogue text uses a vertical limit mode");
+        mode_ = mode;
+    }
+
+    void apply(Tx &tx, Handle root, const Context &) override {
+        Handle text = tx.ui().find(root, "Container/Dialogue");
+        tx.set(text, Comp::Stm, Prop::StmUiLimit, 1);
+        tx.set(text, Comp::Stm, Prop::StmBestFit, mode_);
+    }
+
+  private:
+    std::vector<BoxKind> kinds_;
+    int mode_ = 0;
 };
 
 // FR-UI-19: while the text log is open the dialogue text gets rebuilt (e.g.
@@ -494,6 +539,29 @@ void set_height(Ui &ui, Handle go, float h) {
     }
 }
 
+void set_font_size(Ui &ui, Handle go, float size) {
+    if (!near(static_cast<float>(ui.get(go, Comp::Tmp, Prop::TmpFontSize)), size)) {
+        ui.set(go, Comp::Tmp, Prop::TmpFontSize, size);
+    }
+}
+
+// FR-UI-0d for a description split into head and continuation: finds the
+// largest size in [floor, target] at which `needed(continuation height)` fits
+// into `available`, and leaves both parts synced at that size (FR-UI-23).
+// Returns the continuation height at that size.
+float fit_description(Ui &ui, Handle head, Handle continuation, float target, float floor, float available,
+                      const std::function<float(float)> &needed) {
+    auto measure = [&](float size) {
+        set_font_size(ui, head, size);
+        set_font_size(ui, continuation, size);
+        return sync_continuation(ui, head, continuation);
+    };
+    // No usable measure yet (e.g. before the first layout): keep the enlarged size.
+    if (!(available > 0.0f)) return measure(target);
+    float size = layout::largest_fitting(target, floor, [&](float s) { return needed(measure(s)) <= available + 0.5f; });
+    return measure(size);
+}
+
 // ---------------------------------------------------------------------------
 // Evidence menu: Clues, Spells and People share one display (FR-UI-20 ... 28)
 
@@ -581,7 +649,7 @@ class EvidenceMenuUnit : public Unit {
         tx.set(top, Comp::HLayout, Prop::LgExpandWidth, 0);
     }
 
-    void tick(Ui &ui, Handle root, const Context &) override {
+    void tick(Ui &ui, Handle root, const Context &ctx) override {
         if (!ui.active_in_hierarchy(root)) return;
         Handle base = ui.find(root, kBase);
         Handle top = ui.find(base, "Top");
@@ -609,8 +677,21 @@ class EvidenceMenuUnit : public Unit {
             last_text_ = id;
             last_width_ = width;
             frames_ = 0;
-            sync_continuation(ui, head, continuation);
-            set_height(ui, fields, sync_rows(ui, fields, "Item Field Names", "Item Field Values", orig_->fields_spacing));
+            float fields_h = sync_rows(ui, fields, "Item Field Names", "Item Field Values", orig_->fields_spacing);
+            set_height(ui, fields, fields_h);
+            // FR-UI-0d: the continuation, details and View button stack in the
+            // lower area, which keeps the panel's bounds (FR-UI-27). When they
+            // don't fit, the description shrinks.
+            Handle view = ui.find(lower, "View Button");
+            float spacing_lower = static_cast<float>(ui.get(lower, Comp::VLayout, Prop::LgSpacing));
+            float view_h = view && ui.active_self(view) ? ui.rect_size(view).y : 0.0f;
+            float rest = fields_h + (view_h > 0.0f ? spacing_lower + view_h : 0.0f);
+            auto needed = [&](float continuation_h) {
+                return rest + (continuation_h > 0.0f ? continuation_h + spacing_lower : 0.0f);
+            };
+            const TmpSize &o = orig_->description_text;
+            fit_description(ui, head, continuation, layout::scale_tmp(o, ctx.settings.scale, true).font_size,
+                            layout::fit_floor(o), ui.rect_size(lower).y, needed);
         }
     }
 
@@ -647,6 +728,8 @@ class NotificationUnit : public Unit {
         Handle description = need(ui, root, "Window/Description", {Comp::Tmp});
         if (ui.find(root, std::string("Window/") + kContinuationName)) throw AlreadyApplied();
         expect(ui.get(window, Comp::VLayout, Prop::LgControlHeight) == 0.0, "notification layout changed");
+        RectData wr = ui.rect(window);
+        expect(wr.anchorMin.y == wr.anchorMax.y, "notification panel is stretched vertically");
         if (orig_) return;
         Originals o;
         o.window = ui.rect(window);
@@ -752,18 +835,44 @@ class NotificationUnit : public Unit {
         tx.set_linked_text(description, continuation);
     }
 
-    void tick(Ui &ui, Handle root, const Context &) override {
+    void tick(Ui &ui, Handle root, const Context &ctx) override {
         if (!ui.active_in_hierarchy(root)) return;
+        Handle window = ui.find(root, "Window");
+        Handle header = ui.find(root, "Window/Header");
         Handle head = ui.find(root, "Window/Top/Item Info/Description");
         Handle continuation = ui.find(root, std::string("Window/") + kContinuationName);
         Handle fields = ui.find(root, "Window/Item Fields");
-        if (!head || !continuation || !fields) throw Mismatch("notification structure changed at runtime");
+        if (!window || !head || !continuation || !fields) throw Mismatch("notification structure changed at runtime");
         const void *id = ui.text_identity(head, Comp::Tmp);
         if (id != last_text_ || ++frames_ >= 30) {
             last_text_ = id;
             frames_ = 0;
-            sync_continuation(ui, head, continuation);
-            set_height(ui, fields, sync_rows(ui, fields, "Item Field Names", "Item Field Values", orig_->fields_spacing));
+            const Originals &o = *orig_;
+            float fields_h = sync_rows(ui, fields, "Item Field Names", "Item Field Values", o.fields_spacing);
+            set_height(ui, fields, fields_h);
+            // FR-UI-0d: the panel's height fits its contents (FR-UI-35); when
+            // that would take it off the screen, the description shrinks. The
+            // heading sits above the panel and has its own limit (FR-UI-31).
+            float spacing = static_cast<float>(ui.get(window, Comp::VLayout, Prop::LgSpacing));
+            auto needed = [&](float continuation_h) {
+                float total = 0;
+                int shown = 0;
+                for (int i = 0, n = ui.child_count(window); i < n; ++i) {
+                    Handle c = ui.child(window, i);
+                    if (c == header) continue;
+                    float h = c == continuation ? continuation_h
+                              : c == fields     ? fields_h
+                              : ui.active_self(c) ? ui.rect_size(c).y
+                                                  : 0.0f;
+                    if (h <= 0.0f) continue;
+                    total += h;
+                    ++shown;
+                }
+                return total + (shown > 1 ? spacing * static_cast<float>(shown - 1) : 0.0f);
+            };
+            float available = layout::max_panel_height(o.window.anchorMin.y, o.window.anchoredPosition.y, o.window.pivot.y);
+            fit_description(ui, head, continuation, layout::scale_tmp(o.description_text, ctx.settings.scale, false).font_size,
+                            layout::fit_floor(o.description_text), available, needed);
         }
     }
 
@@ -786,6 +895,10 @@ std::vector<std::unique_ptr<Unit>> make_units() {
     units.push_back(std::make_unique<DialogueBoxUnit>("dialogue_box", "dialogue_box", BoxKind::Dialogue));
     units.push_back(std::make_unique<DialogueBoxUnit>("narrator_box", "dialogue_box", BoxKind::Narrator));
     units.push_back(std::make_unique<DialogueBoxUnit>("cross_examination", "cross_examination", BoxKind::Testimony));
+    units.push_back(std::make_unique<DialogueFitUnit>(
+        "dialogue_text_fit", "dialogue_box", std::initializer_list<BoxKind>{BoxKind::Dialogue, BoxKind::Narrator}));
+    units.push_back(std::make_unique<DialogueFitUnit>(
+        "cross_examination_text_fit", "cross_examination", std::initializer_list<BoxKind>{BoxKind::Testimony}));
     units.push_back(std::make_unique<LineRestoreUnit>());
     units.push_back(std::make_unique<StoryImageUnit>());
     units.push_back(std::make_unique<TextLogUnit>());

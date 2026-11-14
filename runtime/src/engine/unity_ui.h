@@ -60,6 +60,7 @@ class UnityUi : public Ui {
     void update_text(Handle go, Comp c) override;
     const void *text_identity(Handle go, Comp c) override;
     void show_text_until(Handle go, double read_time) override;
+    int enum_value(Handle go, Comp c, Prop p, const std::string &member) override;
 
     // The GameObject a component belongs to.
     Handle game_object_of(Object *component);

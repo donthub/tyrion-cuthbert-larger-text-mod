@@ -56,6 +56,21 @@ Loading sequence:
   runtime records which line was fully revealed, and after the log closes it calls
   `SuperTextMesh.SetMesh(readTime)` for that same line. That call only redraws:
   it does not start, stop or re-time reading and fires no events.
+- **Shrink to fit (FR-UI-0d).** Three mechanisms, each with the floor "never below
+  the game's own size":
+  - Nameplate and character-info labels: TextMesh Pro auto-sizing, from the enlarged
+    size down to the original size (or the game's own auto-size minimum).
+  - Dialogue, narrator and testimony text: Super Text Mesh's own best fit
+    (`bestFit = BestFitMode.MultilineFull`, `uiLimit = true`), looked up by name at
+    run time. STM computes it when it builds the line, so reveal and events are
+    unchanged. Separate units (`dialogue_text_fit`, `cross_examination_text_fit`),
+    so an STM change only loses the fitting. They are skipped when the game already
+    uses a best-fit or vertical-limit mode.
+  - Evidence description and popup: the per-frame tick finds the largest size at
+    which the continuation, details and View button fit the lower area (evidence
+    menu) or the panel stays on screen (popup), by bisection with
+    `ForceMeshUpdate`. It runs only when the text or width changes, plus every 30
+    frames.
 - **Unattended in-game checks.** `[debug] commands = true` enables a command file
   (see the README).
 

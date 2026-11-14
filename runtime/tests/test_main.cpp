@@ -342,6 +342,38 @@ TEST(layout_text_sizes) {
     CHECK_NEAR(layout::heading_height(100, 2.0, 0.825f), 175);
 }
 
+TEST(layout_shrink_to_fit) {
+    layout::TmpSize fixed{20, 18, 72, false};
+    CHECK_NEAR(layout::fit_floor(fixed), 20);  // never below the original size
+    layout::TmpSize f = layout::fit_tmp(fixed, 1.5);
+    CHECK(f.auto_size);
+    CHECK_NEAR(f.font_size, 30);
+    CHECK_NEAR(f.max, 30);
+    CHECK_NEAR(f.min, 20);
+    layout::TmpSize autos{36, 18, 42, true};
+    CHECK_NEAR(layout::fit_floor(autos), 18);  // the game's own lower bound
+    CHECK_NEAR(layout::fit_tmp(autos, 2.0).max, 84);
+    CHECK_NEAR(layout::fit_tmp(autos, 2.0).min, 18);
+
+    int calls = 0;
+    auto fits_below = [&](float limit) {
+        return [&calls, limit](float s) { ++calls; return s <= limit; };
+    };
+    CHECK_NEAR(layout::largest_fitting(36, 18, fits_below(40)), 36);  // fits: unchanged
+    CHECK(calls == 1);
+    float r = layout::largest_fitting(36, 18, fits_below(20.3f));
+    CHECK(r <= 20.3f && r > 20.3f - 0.5f);
+    CHECK_NEAR(layout::largest_fitting(36, 18, fits_below(10)), 18);  // floor
+    CHECK_NEAR(layout::largest_fitting(18, 18, fits_below(10)), 18);
+
+    // Top pivot at 82.5 % of the screen: grows down to the bottom margin.
+    CHECK_NEAR(layout::max_panel_height(0.825f, 0, 1), 891 - 14);
+    // Bottom pivot: grows up to the top margin.
+    CHECK_NEAR(layout::max_panel_height(0, 50, 0), 1080 - 14 - 50);
+    // Centre pivot: limited by the nearer edge.
+    CHECK_NEAR(layout::max_panel_height(0.5f, 300, 0.5f), 2 * (1080 - 14 - 840));
+}
+
 // --- framework ----------------------------------------------------------------
 
 TEST(dialogue_box_applies_once_and_never_compounds) {
@@ -362,6 +394,14 @@ TEST(dialogue_box_applies_once_and_never_compounds) {
     CHECK_NEAR(ui.path(box, "Container/Nameplate/Text")->comps[Comp::Tmp][Prop::TmpFontSize], 63);
     CHECK_NEAR(ui.path(box, "Container/Buttons")->rect.anchoredPosition.y, 37.5);
     CHECK_NEAR(ui.path(box, "Container/Character Info/Age")->comps[Comp::Tmp][Prop::TmpFontSize], 30);
+    // Long names and labels shrink to fit, down to the game's own sizes.
+    CHECK_NEAR(ui.path(box, "Container/Nameplate/Text")->comps[Comp::Tmp][Prop::TmpFontSizeMin], 18);
+    CHECK_NEAR(ui.path(box, "Container/Character Info/Age")->comps[Comp::Tmp][Prop::TmpAutoSize], 1);
+    CHECK_NEAR(ui.path(box, "Container/Character Info/Age")->comps[Comp::Tmp][Prop::TmpFontSizeMin], 20);
+    // Long dialogue lines shrink to fit the text area (Super Text Mesh best fit).
+    CHECK_NEAR(d->comps[Comp::Stm][Prop::StmBestFit], 6);
+    CHECK_NEAR(d->comps[Comp::Stm][Prop::StmUiLimit], 1);
+    CHECK(log.has("FEATURE dialogue_text_fit applied"));
     CHECK(log.has("FEATURE dialogue_box applied"));
     CHECK(log.has("FEATURE text_log_line_restore applied"));
 
@@ -415,10 +455,11 @@ TEST(mismatch_skips_only_that_feature_without_partial_changes) {
     std::string before = snapshot(box);
     rt.on_instance(ui, Target::DialogueBox, box);
     CHECK(log.has("FEATURE dialogue_box skipped: missing 'Container/Nameplate'"));
-    // The line-restore unit still works; restore it to compare the rest.
+    // The line-restore and text-fit units still work; undo them to compare the rest.
     Node *d = ui.path(box, "Container/Dialogue");
     CHECK_NEAR(d->comps[Comp::Stm][Prop::StmRememberReadPosition], 1);
-    d->comps[Comp::Stm].erase(Prop::StmRememberReadPosition);
+    CHECK_NEAR(d->comps[Comp::Stm][Prop::StmBestFit], 6);
+    for (Prop p : {Prop::StmRememberReadPosition, Prop::StmBestFit, Prop::StmUiLimit}) d->comps[Comp::Stm].erase(p);
     CHECK(snapshot(box) == before);
     // The skipped feature stays off for the session.
     Node *good = make_box(ui, Box::Dialogue);
@@ -442,7 +483,7 @@ TEST(engine_error_rolls_back_and_disables_only_that_feature) {
     CHECK(log.has("FEATURE dialogue_box failed: injected failure"));
     ui.fail_on = Prop::Count;
     Node *d = ui.path(box, "Container/Dialogue");
-    d->comps[Comp::Stm].erase(Prop::StmRememberReadPosition);
+    for (Prop p : {Prop::StmRememberReadPosition, Prop::StmBestFit, Prop::StmUiLimit}) d->comps[Comp::Stm].erase(p);
     CHECK(snapshot(box) == before);
     Node *img = make_image(ui);
     rt.on_instance(ui, Target::ImageDisplay, img);
@@ -486,6 +527,35 @@ TEST(feature_switch_off_changes_only_that_feature) {
     rt.on_instance(ui, Target::DialogueBox, box);
     CHECK_NEAR(ui.path(box, "Container/Dialogue")->comps[Comp::Stm][Prop::StmRememberReadPosition], 0);
     CHECK_NEAR(ui.path(box, "Container")->rect.sizeDelta.y, 390);
+}
+
+TEST(dialogue_text_fit_variants) {
+    FakeUi ui;
+    MemLog log;
+    Settings s = settings();
+    s.features["cross_examination"] = false;
+    Runtime rt(s, log);
+    Node *nar = make_box(ui, Box::Narrator);
+    rt.on_instance(ui, Target::DialogueBox, nar);
+    CHECK_NEAR(ui.path(nar, "Container/Dialogue")->comps[Comp::Stm][Prop::StmBestFit], 6);
+    // Cross-examination off: its text is not touched either.
+    Node *t = make_box(ui, Box::Testimony);
+    rt.on_instance(ui, Target::DialogueBox, t);
+    CHECK_NEAR(ui.path(t, "Container/Dialogue")->comps[Comp::Stm][Prop::StmBestFit], 0);
+    CHECK(log.has("FEATURE cross_examination_text_fit disabled") || !log.has("cross_examination_text_fit applied"));
+
+    // A game that already fits or pages its text: only the fitting is skipped.
+    FakeUi ui2;
+    MemLog log2;
+    Runtime rt2(settings(), log2);
+    Node *box = make_box(ui2, Box::Dialogue);
+    ui2.path(box, "Container/Dialogue")->comps[Comp::Stm][Prop::StmVerticalLimitMode] = 3;
+    rt2.on_instance(ui2, Target::DialogueBox, box);
+    CHECK(log2.has("FEATURE dialogue_text_fit skipped: dialogue text uses a vertical limit mode"));
+    CHECK(log2.has("FEATURE dialogue_box applied"));
+    CHECK_NEAR(ui2.path(box, "Container/Dialogue")->comps[Comp::Stm][Prop::StmBestFit], 0);
+    CHECK_NEAR(ui2.path(box, "Container/Dialogue")->comps[Comp::Stm][Prop::StmUiLimit], 0);
+    CHECK_NEAR(ui2.path(box, "Container")->rect.sizeDelta.y, 390);
 }
 
 TEST(story_image_clears_the_taller_panel) {
@@ -569,6 +639,27 @@ TEST(evidence_menu_layout_and_overflow) {
     // Item info fills the space left of the picture.
     CHECK_NEAR(info->rect.sizeDelta.x, 1000 - 170 - 10);
 
+    // FR-UI-0d: a long description shrinks so the continuation, details and View
+    // button fit the lower area (305 high): 10 * size + 15 + 72 <= 305 at the
+    // most, so about 21.8, above the game's own minimum of 18.
+    cont->text_lines = 10;
+    head->comps[Comp::Button];  // new text
+    rt.on_frame(ui);
+    double fitted = head->comps[Comp::Tmp][Prop::TmpFontSize];
+    CHECK(fitted <= 21.8 && fitted > 21.8 - 0.5);
+    CHECK_NEAR(cont->comps[Comp::Tmp][Prop::TmpFontSize], fitted);  // same size in both parts
+    CHECK_NEAR(cont->rect.sizeDelta.y, std::ceil(10 * fitted));
+    // Far too long: never below the game's own minimum.
+    cont->text_lines = 40;
+    head->comps[Comp::AspectFitter];
+    rt.on_frame(ui);
+    CHECK_NEAR(head->comps[Comp::Tmp][Prop::TmpFontSize], 18);
+    // Short again: back to the enlarged size.
+    cont->text_lines = 2;
+    head->comps.erase(Comp::AspectFitter);
+    rt.on_frame(ui);
+    CHECK_NEAR(head->comps[Comp::Tmp][Prop::TmpFontSize], 36);
+
     // Re-opening the same menu doesn't apply again.
     std::string once = snapshot(menu);
     rt.on_instance(ui, Target::ItemMenu, menu);
@@ -609,6 +700,28 @@ TEST(evidence_notification_layout) {
     rt.on_frame(ui);
     CHECK_NEAR(ui.path(w, "Item Fields/Item Field (1)")->rect.sizeDelta.y, 0);
     CHECK_NEAR(ui.path(w, "Item Fields")->rect.sizeDelta.y, 72);
+
+    // FR-UI-0d: the panel grows down from 82.5 % of the screen and has
+    // 891 - 14 = 877 units. With picture row 270, 72 for the details and two
+    // gaps of 25, a continuation of 12 lines fits up to size 485 / 12 = 40.4.
+    Node *cont = w->children[2];
+    ui.overflowing.insert(head);
+    cont->text_lines = 12;
+    head->comps[Comp::Button];  // new text
+    rt.on_frame(ui);
+    CHECK(cont->active);
+    double fitted = head->comps[Comp::Tmp][Prop::TmpFontSize];
+    CHECK(fitted <= 40.42 && fitted > 39.9);
+    CHECK_NEAR(cont->comps[Comp::Tmp][Prop::TmpFontSize], fitted);
+    // Short text keeps the enlarged size; far too long stops at the original 24.
+    cont->text_lines = 2;
+    head->comps[Comp::AspectFitter];
+    rt.on_frame(ui);
+    CHECK_NEAR(head->comps[Comp::Tmp][Prop::TmpFontSize], 48);
+    cont->text_lines = 100;
+    head->comps.erase(Comp::AspectFitter);
+    rt.on_frame(ui);
+    CHECK_NEAR(head->comps[Comp::Tmp][Prop::TmpFontSize], 24);
 }
 
 TEST(tick_errors_disable_only_the_feature) {

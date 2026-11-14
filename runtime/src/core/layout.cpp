@@ -94,8 +94,43 @@ TmpSize scale_heading(const TmpSize &o, double factor) {
 float heading_height(float original_height, double factor, float panel_top_anchor) {
     float wanted = original_height * static_cast<float>(factor);
     // Keep a small margin to the screen edge.
-    float available = (1.0f - panel_top_anchor) * kReferenceHeight - 14.0f;
+    float available = (1.0f - panel_top_anchor) * kReferenceHeight - kScreenMargin;
     return std::max(original_height, std::min(wanted, available));
+}
+
+float fit_floor(const TmpSize &o) { return o.auto_size ? std::min(o.min, o.max) : o.font_size; }
+
+TmpSize fit_tmp(const TmpSize &o, double factor) {
+    TmpSize t;
+    float base = o.auto_size ? o.max : o.font_size;
+    t.font_size = scaled_font(base, factor);
+    t.max = t.font_size;
+    t.min = std::min(fit_floor(o), t.max);
+    t.auto_size = true;
+    return t;
+}
+
+float largest_fitting(float hi, float lo, const std::function<bool(float)> &fits, float step) {
+    if (!(hi > lo)) return hi;
+    if (fits(hi)) return hi;
+    if (!fits(lo)) return lo;
+    // Invariant: lo fits, hi doesn't.
+    while (hi - lo > step) {
+        float mid = (lo + hi) / 2.0f;
+        if (fits(mid)) lo = mid;
+        else hi = mid;
+    }
+    return lo;
+}
+
+float max_panel_height(float anchor_y, float pos_y, float pivot_y) {
+    float y = anchor_y * kReferenceHeight + pos_y;  // where the pivot sits
+    float below = y - kScreenMargin;                      // room below the pivot
+    float above = kReferenceHeight - kScreenMargin - y;   // room above it
+    float limit = 1e9f;
+    if (pivot_y > 0.0f) limit = std::min(limit, below / pivot_y);
+    if (pivot_y < 1.0f) limit = std::min(limit, above / (1.0f - pivot_y));
+    return std::max(0.0f, limit);
 }
 
 }  // namespace ltm::layout
