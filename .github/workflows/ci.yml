@@ -1,0 +1,46 @@
+# Builds the runtime and runs all tests on every push and pull request. Never publishes.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build runtime and run C++ tests
+        run: python scripts/build_runtime.py --version 0.0.0-ci --test
+      - name: Run Python tests
+        run: python -m unittest discover -s tests -v
+      - name: Package (not published)
+        run: python scripts/package_release.py --version 0.0.0-ci --runtime build/release/version.dll --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-archives
+          path: dist/*
+          retention-days: 7
+
+  python-tests:
+    # The installer, updater and launchers also run on Windows; test them there too.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run Python tests
+        run: python -m unittest discover -s tests -v

@@ -1,119 +1,192 @@
-# Tyrion Cuthbert: Attorney of the Arcane - Larger text mod
+# Tyrion Cuthbert: Attorney of the Arcane – Larger Text Mod
 
-Asset mod for Windows build of **Tyrion Cuthbert: Attorney of the Arcane** (Unity 6000.5.8f1).
+Makes the game's text easier to read on small screens such as the Steam Deck:
 
-Validated with Steam build **25968594**, including migration from the previous mod installation.
+- **Dialogue, narrator and cross-examination boxes:** larger text and taller panels. The normal dialogue panel is as wide as the screen. The panel background opacity is configurable.
+- **Cross-examination:** *Press* and *Present* move to the top corners; the arrows sit above the panel.
+- **Story images and building plans:** shrink so they stay above the taller dialogue panel.
+- **Text log:** larger, wider, normal letter spacing. The current line no longer disappears when you close the log.
+- **Evidence menu (Clues, Spells, People):** larger description. The picture is on the right, the description starts beside it and continues below it at full width, and the details follow.
+- **"Obtained / updated evidence" popup:** wider and larger, with the same picture-and-description layout.
+- **Pause when unfocused:** the game no longer reacts to input while another window has focus.
 
-This mod makes several adjustments to UI and text scaling in the game for easier reading on smaller screens, for example on Steam Deck.
+The mod works at runtime: a small loader (`version.dll`) applies the changes in memory when the game starts. **No game file is modified**, save files are never touched, and Uninstall removes everything the mod added.
 
-These changes include:
+## Prerequisites
 
-- Dialogue box size
-- Dialogue box opacity
-- Dialogue box text size
-- Dialogue box secondary descriptions
-- Cross-examination uses the same enlarged dialogue box and text. Press and Present sit in the top left and top right corners; navigation arrows sit above the panel on their respective sides.
-- Gameplay popup images, including building plans, shrink proportionally to fit above the enlarged dialogue and narrator boxes.
-- Preserve dialogue and narration text when returning from Text log.
-- Text log text size
-- Description texts in evidence panels, starting to the left of the picture and continuing across the full width below it. Detail fields and the View button follow the description. Clues, Spells and People share this layout.
-- Text in the “Obtained evidence!” and “Evidence updated!” notifications, with a wider panel, the picture on the right, and descriptions that flow to its left and below it. Detail fields follow the description. The panel height fits the text and picture; empty detail rows no longer reserve extra height.
-- Pause when the game loses focus, preventing background inputs from advancing dialogue or activating controls. Switch back to the game to resume.
+| Platform | You need |
+| --- | --- |
+| Windows 10/11 (64-bit) | **Python 3.8 or newer**, for the Install/Uninstall/Update scripts only: `winget install Python.Python.3.12`, or the installer from [python.org](https://www.python.org/downloads/) with *Add python.exe to PATH* ticked. |
+| Steam Deck / Linux (Proton) | Nothing extra: SteamOS and common distributions ship `python3`. |
 
-Saves are not affected by this mod.
+The game itself does not need Python. Nothing is installed system-wide and nothing is downloaded during installation.
 
-![Unmodded](image-unmodded.jpg)
+## Installation
 
-![Modded](image-modded.jpg)
+1. Download the archive for your platform from the [latest release](https://github.com/donthub/tyrion-cuthbert-larger-text-mod/releases/latest):
+   - Windows: `TyrionCuthbertLargerTextMod-vX.Y.Z-windows.zip`
+   - Steam Deck / Linux: `TyrionCuthbertLargerTextMod-vX.Y.Z-linux.tar.gz`
+2. In Steam, right-click the game → *Manage* → *Browse local files*. Extract the archive there, so that the `TyrionCuthbertLargerTextMod` folder is directly inside the game folder (next to `Tyrion1.exe`).
+3. Close the game, then run Install:
+   - **Windows:** double-click `TyrionCuthbertLargerTextMod\Install.bat`.
+   - **Steam Deck (Desktop Mode) / Linux:** open a terminal in the `TyrionCuthbertLargerTextMod` folder and run `./Install.sh`.
 
-## Pre-requisites
+   For other settings, pass a scale (1.1–2.0, default 1.5) and an opacity (0.0–1.0, default 0.99): `Install.bat 1.3 0.8` or `./Install.sh 1.3 0.8`.
+4. **Steam Deck / Linux only, once:** in Steam, open the game's *Properties* → *General* → *Launch Options* and enter
 
-- Python 3.10 or newer
+   ```
+   WINEDLLOVERRIDES="version=n,b" %command%
+   ```
 
-## Use
+   Proton otherwise ignores the mod's `version.dll`. The option stays valid for mod updates. On Windows, no extra step is needed.
+5. Start the game normally.
 
-- Download the Windows `.zip` or Linux / Steam Deck `.tar.gz` archive from [Releases](https://github.com/donthub/tyrion-cuthbert-larger-text-mod/releases) and extract it.
-- Copy `TyrionCuthbertLargerTextMod` folder into the game folder. Game folder can be found by game > right click > Manage > Browse local files in Steam.
-- Run `Install.bat` / `Install.sh` for the default 50% increase.
-- To choose a different increase, run `Install.bat 1.3` / `Install.sh 1.3` (30% larger). Supported scale range: 1.1 through 2.0.
-- To also set dialogue box opacity, run `Install.bat 1.3 0.8` / `Install.sh 1.3 0.8` (30% larger, 80% opacity). Opacity ranges from 0 (transparent) to 1 (opaque), with a default of 0.99. This affects the dialogue and narrator backgrounds; text and controls retain their opacity. To change opacity with the default scale, use `Install.bat 1.5 0.8` / `Install.sh 1.5 0.8`.
-- Run `Uninstall.bat` / `Uninstall.sh` to restore the original files.
-- Run `python mod.py status` / `python3 mod.py status` to check the installation.
+If the original asset-patching version of this mod (v1.x) is installed, Install refuses. Run that version's `Uninstall` first, or use Steam's *Verify integrity of game files*, then install this version.
 
-### Updating the mod
+## Configuration
 
-Run `Update.bat` on Windows or `bash Update.sh` on Linux / Steam Deck from your existing mod folder. The updater downloads the latest stable release from this project's GitHub releases, selects the archive for your platform, and replaces the packaged mod files. It requires Python 3.10 or newer and an internet connection; no additional Python packages are needed.
+Install writes `TyrionCuthbertLargerTextMod/config.ini`. Edit it with any text editor; changes take effect at the next game start. Re-running Install changes only `scale` and `opacity` and keeps everything else.
 
-After the download completes, close the game and run `Install.bat` / `Install.sh` with your preferred scale and opacity to apply the new version, for example `Install.bat 1.3 0.8` or `bash Install.sh 1.3 0.8`. Updating the scripts alone does not change the installed game assets. The updater preserves `backup`, `state.json`, local Python environments, and other files outside the release's explicit file list. Release copies replace any local edits to packaged mod files.
+```ini
+[general]
+enabled = true          ; master switch: false = the mod changes nothing
+scale = 1.5             ; text size, 1.1 to 2.0
+opacity = 0.99          ; dialogue panel background, 0.0 (transparent) to 1.0
 
-Use `Update.bat --check` or `bash Update.sh --check` to download and validate the latest release without replacing files. You can also run `python update_mod.py` / `python3 update_mod.py` directly. Downloads are validated before any files are replaced, including GitHub's SHA-256 checksum when available. If replacement fails, the updater attempts to restore the previous mod files.
-
-For installations that predate the updater, copy `update_mod.py` and the appropriate `Update.bat` / `Update.sh` launcher into the existing mod folder once, or extract a newer release into that folder. Keep `backup` and `state.json`.
-
-When invoking Python directly in an environment with UnityPy installed, use `python mod.py install --scale 1.3 --opacity 0.8` (or `python3` on Linux). Both options are optional and use their defaults when omitted. Re-run the installer with your desired scale and opacity to adjust an existing installation.
-
-Every adjustment is calculated from the original backup, so repeated installation never compounds the increase. Run the installer again to upgrade an older version of this mod; keep the existing backup and `state.json`. Larger settings take up more screen space. Dialogue choices and unrelated menus keep their existing text size. Extremely long lines and all languages/resolutions have not been visually tested; try a smaller scale if text exceeds its panel.
-
-To apply the Text log fix to an existing installation, copy the updated `mod.py` into the installed mod folder and re-run the installer with your preferred scale and opacity. Keep `backup` and `state.json`.
-
-The same update procedure applies the popup image fix. Images keep their original top margin and aspect ratio, with their lower edge placed just above the larger of the dialogue and narrator panels. The image viewer inside the evidence menu keeps its existing layout.
-
-## Backups and game updates
-
-Original files are kept in `TyrionCuthbertLargerTextMod/backup`, with SHA-256 hashes in `state.json`. Keep this folder to remove the mod. The Windows installer manages `.mod-tools/windows-py...`; the Linux installer manages `.venv-linux`. Older Windows installations may also have `.mod-tools/python`, which remains supported for direct `mod.py` invocation outside a virtual environment. Windows binaries are ignored on Linux.
-
-The mod changes the default shared asset bundle, its CRC entry in `Tyrion1_Data/StreamingAssets/aa/catalog.bin`, the catalog's cache version token in `catalog.hash`, and the `runInBackground` player setting in `Tyrion1_Data/data.unity3d`. All four files are backed up and restored on uninstall. It never writes save files.
-
-Re-run the updated installer to add the focus fix to an existing installation. It retains the existing UI backups and adds a backup of the verified original player data. The fix disables Unity's [Run in Background](https://docs.unity.com/en-us/engine/6000.5/script-reference/unityengine/application/runinbackground) setting, so gameplay pauses while another application has focus. Player data from unsupported builds or other mods is rejected before any game files are changed.
-
-Steam verification or updates can replace modified files. For Steam build **25968594**, copy the updated mod scripts into your existing mod folder and run the installer again. Keep `backup` and `state.json`. The installer recognizes the exact clean bundle, catalog, and hash from this update, validates the patch, then backs up the new originals in a separate subfolder. Previous backups and an archived state file remain in `backup`. Uninstall now restores the new build's originals.
-
-Automatic migration refuses unknown or partially updated files and changes from other mods. If refused, use Steam's **Verify integrity of game files** to restore a consistent current game and try again. For an unsupported update, retain the entire old mod folder separately before starting a fresh installation; reinspection may still be needed. Do not restore old backups over a newer build. Uninstall before future game updates when possible.
-
-## Implementation and validation
-
-`mod.py` is the editable source. It uses [UnityPy 1.25.4](https://github.com/K0lb3/UnityPy), provisioned by the platform installer. The actual dialogue renderer is [Super Text Mesh](https://kaiclavier.com/docs/SuperTextMesh.html); TextMesh Pro is used elsewhere in the interface. Unity validates bundles using a CRC of their [uncompressed contents](https://docs.unity3d.com/ScriptReference/AssetBundle.LoadFromMemory.html).
-
-The installer reparses the rebuilt bundle, checks all objects and unchanged resource streams, and checks the installed hashes. Install, adjustment, repeat installation, and byte-exact uninstall are also exercised on an isolated copy.
-
-Popup image validation checks clearance above both dialogue panels at each tested scale, the unchanged top margin and aspect-ratio fitter, and preservation of the evidence menu's separate image viewer. In-game visual verification of building plans and other story illustrations is still needed.
-
-Evidence descriptions use TextMesh Pro's [Linked overflow mode](https://docs.unity.cn/Packages/com.unity.textmeshpro@3.2/manual/TMPObjectUIText.html#wrapping-and-overflow) to continue from the region beside the picture into a full-width region below it. The game still supplies localized text to the original renderer; the continuation contains only graphics components and receives the remaining text automatically. Notifications grow to fit the continuation. The evidence menu keeps its existing panel bounds and allows the lower text region to shrink to the original minimum font size for especially long entries.
-
-Evidence validation checks both text links, matching fonts, space beside the image at each scale, hierarchy ownership, and preservation of localization, controllers, images and button actions. Detail rows use their text's preferred height instead of a fixed height, preserving the menu's 33/67 and notifications' 40/60 name/value column splits. In-game verification is still needed: select short and long clues, switch repeatedly between them, open and close the evidence page, and trigger both notification variants. Check that the continuation clears for shorter entries, that no text is repeated or missing at the transition below the picture, and that populated detail fields and the View button remain usable. Also check Spells and People, which share the menu layout, at the largest text scale.
-
-The Text log fix enables Super Text Mesh's [`rememberReadPosition`](https://kaiclavier.com/docs/SuperTextMesh.html#rememberReadPosition) on the dialogue and narrator renderers. This preserves their drawing position when disabled and re-enabled, while leaving the game's manual text playback, timing and events unchanged. Asset validation checks both prefabs at every tested scale and opacity. In-game verification is still needed: open and close Text log repeatedly on a completed line and during its reveal, then advance to the next line; repeat for narration. The previous text should return and subsequent lines should play normally.
-
-For the focus fix, validation checks that `runInBackground` is false and that every other byte in the unpacked player data is unchanged. To check runtime behavior, switch to another application during dialogue, press the usual advance/menu keys or controller buttons, then return: dialogue should remain at the same point and controls should work again. This runtime check, including Proton / Steam Deck focus handling, still needs in-game verification.
-
-Run the regression tests with `python -m unittest discover -s tests -v`. To validate local game assets without modifying the installation, run `python tests/validate_game.py --game-dir "path/to/game"` using a Python environment containing UnityPy 1.25.4. This checks migration when existing mod state is present, repeat installation, scales 1.1/1.3/1.5/2.0, background opacities 0/0.8/0.99/1, and exact restoration. In-game visual validation of the updated build is still needed.
-
-## Publishing a release
-
-The GitHub Actions workflow in `.github/workflows/release.yml` runs when a tag starting with `v` is pushed. Tags must use `vMAJOR.MINOR.PATCH`, optionally followed by a prerelease suffix (for example, `v1.0.0-rc.1`). After committing and pushing the changes to release, create and push a new tag:
-
-```sh
-git tag -a v1.0.0 -m "Release v1.0.0"
-git push origin v1.0.0
+[features]
+dialogue_box = true           ; dialogue and narrator boxes
+cross_examination = true      ; testimony box, Press/Present, arrows
+story_images = true           ; story images and building plans
+text_log = true               ; text log size/width and the line-restore fix
+evidence_menu = true          ; Clues / Spells / People
+evidence_notification = true  ; "Obtained evidence!" / "Evidence updated!"
+pause_when_unfocused = true   ; ignore input while the game is in the background
 ```
 
-The workflow runs the regression tests, packages the tagged source, and publishes a GitHub release with generated release notes and two assets:
+Invalid or missing values fall back to their defaults (with a warning in the log). A broken config never stops the game from starting. Set `debug = true` under `[general]` for a more detailed log.
 
-| Archive | Platform-specific files |
+## Status
+
+`Status.bat` / `./Status.sh` reports one of three states:
+
+- *not installed*
+- *installed*, with the settings and feature switches
+- *incomplete*, listing missing or changed files
+
+It also shows where the log is and which features were skipped at the last game start. It never changes anything and needs no network.
+
+## Updating the mod
+
+Close the game and run `Update.bat` / `./Update.sh`. The updater:
+
+- downloads the latest stable release from GitHub and checks its size and SHA-256;
+- validates the archive in memory;
+- replaces the mod's files, with a full rollback if anything fails.
+
+Your `config.ini` and the log are kept. The new version is active at the next game start; no re-install is needed. `Update --check` only checks for a newer version and changes nothing.
+
+## Uninstalling
+
+Close the game and run `Uninstall.bat` / `./Uninstall.sh`. It removes `version.dll`, the config, the manifest and the logs. Only the mod folder's own scripts stay; delete the folder afterwards if you like. On Steam Deck, also remove the launch option. Uninstall needs no network.
+
+## Game updates
+
+Nothing to do: the mod does not depend on the game's files. If Steam's update or *Verify integrity of game files* removes `version.dll`, Status reports *incomplete*; run Install again.
+
+If a game update changes a menu the mod relies on, the mod skips only that feature and logs why. The rest keeps working and the game stays fully playable.
+
+### Verified game builds
+
+| Steam build | Game version | Engine | Mod version | Result |
+| --- | --- | --- | --- | --- |
+| November 2026 Steam build | 50 | Unity 6000.5.8f1, IL2CPP (metadata v107) | 2.0.0 | Loader, dialogue, narrator, text log, line restore and evidence menu checked in-game on Windows. Cross-examination and popup layouts applied without errors; their visual check is pending. Proton/Steam Deck pending. |
+
+## Troubleshooting
+
+The runtime writes `TyrionCuthbertLargerTextMod/runtime.log` at every game start (the previous one is kept as `runtime.log.1`). The log records:
+
+- the mod version and the effective settings;
+- the game and Unity versions;
+- one line per feature: `FEATURE <name> applied`, `disabled`, `skipped: <reason>` (the game's UI is not what the feature expects) or `failed: <reason>` (internal error).
+
+| Problem | What to do |
 | --- | --- |
-| `TyrionCuthbertLargerTextMod-v1.0.0-Windows.zip` | `Install.bat`, `Uninstall.bat`, `Update.bat`, `windows_setup.py` |
-| `TyrionCuthbertLargerTextMod-v1.0.0-Linux-SteamDeck.tar.gz` | `Install.sh`, `Uninstall.sh`, `Update.sh` (executable, with Unix line endings) |
+| No `runtime.log` after starting the game | The loader was not loaded. On Steam Deck/Linux, check the launch option. On Windows, check that `version.dll` is in the game folder (Status). |
+| A feature is `skipped` | A game update changed that menu. The rest keeps working; check for a mod update. |
+| Text too large or overflowing | Re-run Install with a smaller scale, e.g. `Install 1.3`. |
+| Want the original look back temporarily | Set `enabled = false` in `config.ini`. |
 
-Both archives contain a `TyrionCuthbertLargerTextMod` folder with `mod.py`, `update_mod.py`, and this README. Game assets, backups, installation state, and Python dependencies are excluded; the installers download dependencies on first use. Linux packaging is for the Windows game running through Proton / Steam Deck.
+## Known limitations
 
-Tags with a prerelease suffix produce GitHub prereleases. GitHub Actions must be enabled; the workflow uses the automatic `GITHUB_TOKEN` with `contents: write`, so no personal access token or extra secret is needed. Use a new version tag for each release; the workflow does not replace an existing release.
+- Not every language and resolution has been checked visually. Extremely long text may overflow; use a smaller scale.
+- The evidence menu keeps its outer size, so very long descriptions may run out of room.
+- Other mods that use their own `version.dll`, or that change the same UI, are not supported. Install refuses to overwrite a foreign `version.dll`.
+- The loader uses the game engine's IL2CPP interface. A future Unity upgrade of the game could stop the mod from loading until it is updated. The game stays playable either way.
 
-To build the same archives locally without publishing, run `python scripts/package_release.py v1.0.0`. The files appear in `dist/`. Edit the explicit file lists in that script to change archive contents. Packaging and regression tests do not require game files or UnityPy, and do not replace the game validation described above.
+## For maintainers
+
+### How it works
+
+`runtime/` holds the loader and runtime component (C++17, built with a pinned [Zig](https://ziglang.org/) toolchain). It works as follows:
+
+- `version.dll` forwards the Windows version API to the real system DLL.
+- It waits for IL2CPP to start, then hooks the game's UI controllers through the IL2CPP C API, using [MinHook](https://github.com/TsudaKageyu/minhook).
+- Each feature checks the UI structure, applies its changes once per instance, and is rolled back and disabled on any mismatch or error.
+
+Common loaders (BepInEx, MelonLoader) don't support this game's IL2CPP metadata version (v107), which is why a native loader is used. See [docs/design.md](docs/design.md) for the architecture and the file formats shared between the runtime and the scripts.
+
+`tool/` holds the installer, uninstaller, status and updater. They use the Python standard library only.
+
+### Building and testing (no game files needed)
+
+```
+python scripts/build_runtime.py --version 2.0.0 --test   # downloads pinned Zig to .tools/, builds build/release/version.dll, runs C++ tests
+python -m unittest discover -s tests                      # installer, uninstaller, status, updater, packaging, launchers
+python scripts/package_release.py --version 2.0.0         # dist/*.zip and dist/*.tar.gz
+```
+
+The build needs no game files, reference assemblies or stubs: the runtime finds the game's classes by name at run time.
+
+### In-game validation
+
+1. Install with each combination of scale 1.1, 1.3, 1.5, 2.0 and opacity 0, 0.8, 0.99, 1 (Windows and Steam Deck). Check that `runtime.log` shows every feature `applied` and none `skipped` or `failed`.
+2. Work through the manual checklist in `REQUIREMENTS.md` §12.3: dialogue/narrator/testimony boxes, text log (open and close on completed and revealing lines), evidence tabs with long entries, both popup variants, story images, scene changes and loading saves, and focus switching.
+3. Set `enabled = false` and check that the game looks unmodded.
+4. Uninstall, then run Steam's *Verify integrity of game files*: it should find nothing to repair.
+
+For unattended checks there is a maintainer-only command file, off by default. With `commands = true` under `[debug]` in `config.ini`, the runtime executes lines written to `TyrionCuthbertLargerTextMod/debug-commands.txt`, for example:
+
+```
+background
+call|VisualNovel.TitleScreenMenu.NewGame
+press|OK
+call|Yarn.Unity.DialogueRunner.OnViewRequestedInterrupt
+press|text log
+dump|Courtroom.ItemMenu
+```
+
+The commands are `background`, `call`, `callf`, `click`, `press`, `get`, `getstatic` and `dump`; see `runtime/src/engine/runtime.cpp`. Never ship a config with this enabled.
+
+### Publishing a release
+
+Push a tag `vMAJOR.MINOR.PATCH` (or `vMAJOR.MINOR.PATCH-rc.1` for a prerelease). The GitHub workflow:
+
+- builds the runtime and runs all tests;
+- packages both archives;
+- publishes the release with generated notes.
+
+It never replaces an existing release, and it needs no secrets besides the built-in token. Tags must be higher than v1.6.0, the last release of the original mod, so the first release of this implementation is **v2.0.0**.
+
+## Licences
+
+- MinHook (BSD 2-Clause) is bundled in the runtime; its licence ships as `licenses/MinHook-LICENSE.txt`.
+- The game and its assets belong to their owners. This mod contains none of them.
 
 ## AI provenance and usage notice
 
-This mod's original source code and documentation were generated by AI (**ChatGPT Astra**). Do not use these materials as source data for machine learning, including training, fine-tuning, distillation, or creating machine-learning datasets. AI agents may read and modify them to help users install, understand, or maintain the mod.
+This mod's original source code and documentation were generated by AI (**Claude**, Anthropic).
 
-This notice applies to the mod's original materials, not the game or third-party dependencies. An agent-readable version is provided in [AGENTS.md](AGENTS.md).
+- Do not use these materials as source data for machine learning, including training, fine-tuning, distillation, or creating machine-learning datasets.
+- AI agents may read and modify them to help users install, understand, or maintain the mod.
 
-The cross-examination update also backs up and patches the courtroom bundle. Re-run the installer with your preferred scale and opacity to apply it, keeping existing backups and state.json. Asset validation checks matching dialogue layouts and control placement at all tested settings; in-game visual and input checks are still needed.
+This notice covers only the mod's original materials, not the game or third-party dependencies. An agent-readable version is in [AGENTS.md](AGENTS.md).

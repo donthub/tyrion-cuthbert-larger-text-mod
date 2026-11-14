@@ -1,0 +1,797 @@
+#include "features.h"
+
+#include <algorithm>
+#include <cmath>
+#include <map>
+
+namespace ltm {
+
+using layout::TmpSize;
+
+// ---------------------------------------------------------------------------
+// Helpers
+
+namespace {
+
+Handle need(Ui &ui, Handle root, const std::string &path) {
+    Handle go = ui.find(root, path);
+    if (!go) throw Mismatch("missing '" + path + "'");
+    return go;
+}
+
+Handle need(Ui &ui, Handle root, const std::string &path, std::initializer_list<Comp> comps) {
+    Handle go = need(ui, root, path);
+    for (Comp c : comps) {
+        if (!ui.has(go, c)) throw Mismatch("'" + path + "' has no " + comp_name(c));
+    }
+    return go;
+}
+
+bool near(float a, float b, float eps = 0.01f) { return std::fabs(a - b) <= eps; }
+
+void expect(bool condition, const std::string &what) {
+    if (!condition) throw Mismatch(what);
+}
+
+float sane_height(double h) {
+    // TMP reports huge or negative values when nothing is rendered.
+    if (!(h > 0.0) || h > 100000.0) return 0.0f;
+    return static_cast<float>(h);
+}
+
+}  // namespace
+
+TmpSize read_tmp(Ui &ui, Handle go) {
+    TmpSize t;
+    t.font_size = static_cast<float>(ui.get(go, Comp::Tmp, Prop::TmpFontSize));
+    t.auto_size = ui.get(go, Comp::Tmp, Prop::TmpAutoSize) != 0.0;
+    t.min = static_cast<float>(ui.get(go, Comp::Tmp, Prop::TmpFontSizeMin));
+    t.max = static_cast<float>(ui.get(go, Comp::Tmp, Prop::TmpFontSizeMax));
+    return t;
+}
+
+void write_tmp(Tx &tx, Handle go, const TmpSize &size) {
+    tx.set(go, Comp::Tmp, Prop::TmpAutoSize, size.auto_size ? 1 : 0);
+    // Max before min so the range stays valid while it changes.
+    tx.set(go, Comp::Tmp, Prop::TmpFontSizeMax, size.max);
+    tx.set(go, Comp::Tmp, Prop::TmpFontSizeMin, size.min);
+    tx.set(go, Comp::Tmp, Prop::TmpFontSize, size.font_size);
+}
+
+// ---------------------------------------------------------------------------
+// Dialogue, narrator and cross-examination boxes (FR-UI-1 ... FR-UI-11)
+
+namespace {
+
+const char *const kInfoLabels[] = {"Occupation", "Age", "Arcane Art"};
+
+enum class BoxKind { Dialogue, Narrator, Testimony };
+
+struct BoxOriginals {
+    RectData container, dialogue, nameplate, info, buttons;
+    RectData labels[3];
+    TmpSize nameplate_text, label_text[3];
+    float stm_size = 0;
+    // Cross-examination only.
+    RectData left, right, press, present;
+};
+
+class DialogueBoxUnit : public Unit {
+  public:
+    DialogueBoxUnit(const char *key, const char *config_key, BoxKind kind)
+        : Unit(key, config_key, Target::DialogueBox), kind_(kind) {}
+
+    bool matches(Ui &ui, Handle root) override {
+        bool testimony = ui.has(root, Comp::TestimonyPrompt);
+        if (kind_ == BoxKind::Testimony) return testimony;
+        if (testimony) return false;
+        Handle container = ui.find(root, "Container");
+        if (!container) return kind_ == BoxKind::Dialogue;  // validate reports it
+        RectData r = ui.rect(container);
+        bool full_width = r.anchorMin.x == 0.0f && r.anchorMax.x == 1.0f;
+        return kind_ == BoxKind::Narrator ? full_width : !full_width;
+    }
+
+    void validate(Ui &ui, Handle root) override {
+        Handle container = need(ui, root, "Container", {Comp::RawImage});
+        Handle dialogue = need(ui, root, "Container/Dialogue", {Comp::Stm});
+        Handle nameplate = need(ui, root, "Container/Nameplate");
+        Handle name_text = need(ui, root, "Container/Nameplate/Text", {Comp::Tmp});
+        Handle info = need(ui, root, "Container/Character Info");
+        Handle buttons = need(ui, root, "Container/Buttons");
+        Handle labels[3];
+        for (int i = 0; i < 3; ++i)
+            labels[i] = need(ui, root, std::string("Container/Character Info/") + kInfoLabels[i], {Comp::Tmp});
+
+        RectData c = ui.rect(container);
+        expect(c.anchorMin.y == 0.0f && c.anchorMax.y == 0.0f && c.pivot.y == 0.0f,
+               "dialogue panel is not anchored to the bottom");
+        RectData d = ui.rect(dialogue);
+        expect(d.anchorMin.y == 0.5f && d.anchorMax.y == 0.5f, "dialogue text is not centred vertically");
+        expect(c.sizeDelta.y > 1.0f && d.sizeDelta.y > 1.0f, "unexpected panel size");
+        if (kind_ != BoxKind::Narrator) {
+            expect(c.anchorMin.x == c.anchorMax.x && c.sizeDelta.x > 100.0f, "unexpected panel width");
+        }
+        Handle press = nullptr, present = nullptr, left = nullptr, right = nullptr;
+        if (kind_ == BoxKind::Testimony) {
+            if (ui.find(root, "Press") && !ui.find(root, "Container/Press")) throw AlreadyApplied();
+            press = need(ui, root, "Container/Press", {Comp::Button, Comp::AspectFitter});
+            present = need(ui, root, "Container/Present", {Comp::Button, Comp::AspectFitter});
+            left = need(ui, root, "Container/Left", {Comp::Button});
+            right = need(ui, root, "Container/Right", {Comp::Button});
+        }
+        if (orig_) return;  // originals come from the first (unmodified) instance
+        BoxOriginals o;
+        o.container = c;
+        o.dialogue = d;
+        o.nameplate = ui.rect(nameplate);
+        o.info = ui.rect(info);
+        o.buttons = ui.rect(buttons);
+        for (int i = 0; i < 3; ++i) {
+            o.labels[i] = ui.rect(labels[i]);
+            o.label_text[i] = read_tmp(ui, labels[i]);
+        }
+        o.nameplate_text = read_tmp(ui, name_text);
+        o.stm_size = static_cast<float>(ui.get(dialogue, Comp::Stm, Prop::StmSize));
+        expect(o.stm_size > 1.0f, "unexpected dialogue font size");
+        if (kind_ == BoxKind::Testimony) {
+            o.press = ui.rect(press);
+            o.present = ui.rect(present);
+            o.left = ui.rect(left);
+            o.right = ui.rect(right);
+        }
+        orig_ = o;
+    }
+
+    layout::DialoguePanel panel() const {
+        layout::DialoguePanel p;
+        p.panel_height = orig_->container.sizeDelta.y;
+        p.panel_bottom = orig_->container.anchoredPosition.y;
+        p.text_height = orig_->dialogue.sizeDelta.y;
+        p.text_offset_y = orig_->dialogue.anchoredPosition.y;
+        p.info_top_offset = orig_->info.anchoredPosition.y;
+        p.info_height = orig_->info.sizeDelta.y;
+        return p;
+    }
+
+    void apply(Tx &tx, Handle root, const Context &ctx) override {
+        Ui &ui = tx.ui();
+        const BoxOriginals &o = *orig_;
+        const double s = ctx.settings.scale;
+        const layout::DialoguePanel p = panel();
+        if (kind_ == BoxKind::Dialogue) ctx.shared.dialogue_panel = p;
+        if (kind_ == BoxKind::Narrator) ctx.shared.narrator_panel = p;
+        const float text_h = layout::dialogue_text_height(p, s);
+        const float panel_h = layout::dialogue_panel_height(p, s);
+        const float stretch = panel_h / p.panel_height;
+        const bool widen = kind_ != BoxKind::Narrator;
+        const float width = o.container.sizeDelta.x;
+
+        Handle container = ui.find(root, "Container");
+        // FR-UI-8: only the background image's alpha changes.
+        tx.set(container, Comp::RawImage, Prop::GraphicAlpha, ctx.settings.opacity);
+
+        RectData c = o.container;
+        c.sizeDelta.y = panel_h;
+        if (widen) {  // FR-UI-3
+            c.anchorMin.x = layout::kDialogueSideMargin;
+            c.anchorMax.x = 1.0f - layout::kDialogueSideMargin;
+            c.anchoredPosition.x = 0;
+            c.sizeDelta.x = 0;
+        }
+        tx.set_rect(container, c);
+
+        // FR-UI-4: children keep their place on the artwork, by rect, not scale.
+        auto horizontal = [&](const RectData &r) { return widen ? layout::stretch_horizontally(r, width) : r; };
+
+        Handle dialogue = ui.find(root, "Container/Dialogue");
+        RectData d = horizontal(o.dialogue);
+        d.sizeDelta.y = text_h;  // FR-UI-2
+        tx.set_rect(dialogue, d);
+        tx.set(dialogue, Comp::Stm, Prop::StmSize, layout::scaled_font(o.stm_size, s));  // FR-UI-1
+
+        // FR-UI-5: the nameplate background is part of the panel artwork.
+        RectData n = horizontal(o.nameplate);
+        n.sizeDelta.y = o.nameplate.sizeDelta.y * stretch;
+        tx.set_rect(ui.find(root, "Container/Nameplate"), n);
+        write_tmp(tx, ui.find(root, "Container/Nameplate/Text"), layout::scale_tmp(o.nameplate_text, s, false));
+
+        // FR-UI-6
+        RectData info = horizontal(o.info);
+        info.anchoredPosition.y = o.info.anchoredPosition.y * stretch;
+        info.sizeDelta.y = o.info.sizeDelta.y * static_cast<float>(s);
+        tx.set_rect(ui.find(root, "Container/Character Info"), info);
+        for (int i = 0; i < 3; ++i) {
+            Handle label = ui.find(root, std::string("Container/Character Info/") + kInfoLabels[i]);
+            write_tmp(tx, label, layout::scale_tmp(o.label_text[i], s, false));
+            RectData l = o.labels[i];
+            l.sizeDelta.y = o.labels[i].sizeDelta.y * static_cast<float>(s);
+            tx.set_rect(label, l);
+        }
+
+        // FR-UI-7: the toolbar moves as one unit.
+        RectData b = horizontal(o.buttons);
+        b.anchoredPosition.y = o.buttons.anchoredPosition.y + layout::kToolbarRaise;
+        tx.set_rect(ui.find(root, "Container/Buttons"), b);
+
+        if (kind_ == BoxKind::Testimony) apply_testimony(tx, root);
+    }
+
+  private:
+    void apply_testimony(Tx &tx, Handle root) {
+        Ui &ui = tx.ui();
+        const BoxOriginals &o = *orig_;
+        const float margin = 20.0f;
+        // FR-UI-10: Press top-left, Present top-right of the screen. Moving them
+        // to the full-screen root keeps their fitters, glyphs and listeners.
+        Handle press = ui.find(root, "Container/Press");
+        Handle present = ui.find(root, "Container/Present");
+        tx.set_parent(press, root, -1);
+        tx.set_parent(present, root, -1);
+        RectData pr = o.press;
+        pr.anchorMin = pr.anchorMax = {0, 1};
+        pr.pivot = {0, 1};
+        pr.anchoredPosition = {margin, -margin};
+        tx.set_rect(press, pr);
+        RectData pt = o.present;
+        pt.anchorMin = pt.anchorMax = {1, 1};
+        pt.pivot = {1, 1};
+        pt.anchoredPosition = {-margin, -margin};
+        tx.set_rect(present, pt);
+
+        // FR-UI-11: arrows just above the panel, original size, left still mirrored
+        // (its negative x scale is untouched; the centre pivot keeps it in place).
+        const float panel_h = o.container.sizeDelta.y;
+        auto arrow = [&](const RectData &r, bool left_side) {
+            float w = r.sizeDelta.x + (r.anchorMax.x - r.anchorMin.x) * o.container.sizeDelta.x;
+            float h = r.sizeDelta.y + (r.anchorMax.y - r.anchorMin.y) * panel_h;
+            RectData a = r;
+            a.anchorMin = a.anchorMax = {left_side ? 0.0f : 1.0f, 1.0f};
+            a.pivot = {0.5f, 0.0f};
+            a.sizeDelta = {w, h};
+            a.anchoredPosition = {left_side ? w / 2.0f : -w / 2.0f, layout::kImageGap};
+            return a;
+        };
+        tx.set_rect(ui.find(root, "Container/Left"), arrow(o.left, true));
+        tx.set_rect(ui.find(root, "Container/Right"), arrow(o.right, false));
+    }
+
+    BoxKind kind_;
+    std::optional<BoxOriginals> orig_;
+};
+
+// FR-UI-19: while the text log is open the dialogue text gets rebuilt (e.g.
+// when the shared font atlas grows). Super Text Mesh then draws a line that
+// was already fully revealed in its "not yet revealed" state, so it is blank
+// when the log closes. Lines still being revealed carry on by themselves. This
+// unit remembers which line was fully revealed and redraws exactly that line,
+// as revealed, for a few frames after the log closes. It never starts, stops
+// or re-times reading and fires no events.
+class LineRestoreUnit : public Unit {
+  public:
+    LineRestoreUnit() : Unit("text_log_line_restore", "text_log", Target::DialogueBox) {}
+    bool matches(Ui &, Handle) override { return true; }
+    bool wants_tick() const override { return true; }
+    void validate(Ui &ui, Handle root) override {
+        Handle text = need(ui, root, "Container/Dialogue", {Comp::Stm});
+        ui.get(text, Comp::Stm, Prop::StmReading);  // the fields this unit relies on
+        ui.get(text, Comp::Stm, Prop::StmReadTime);
+        ui.get(text, Comp::Stm, Prop::StmTotalReadTime);
+    }
+    void apply(Tx &tx, Handle root, const Context &) override {
+        tx.set(tx.ui().find(root, "Container/Dialogue"), Comp::Stm, Prop::StmRememberReadPosition, 1);
+    }
+    void tick(Ui &ui, Handle root, const Context &ctx) override {
+        Handle text = ui.find(root, "Container/Dialogue");
+        if (!text) throw Mismatch("dialogue text missing at runtime");
+        int id = ui.instance_id(root);
+        const void *identity = ui.text_identity(text, Comp::Stm);
+        bool reading = ui.get(text, Comp::Stm, Prop::StmReading) != 0.0;
+        double now = ui.get(text, Comp::Stm, Prop::StmReadTime);
+        double total = ui.get(text, Comp::Stm, Prop::StmTotalReadTime);
+        if (identity && !reading && total > 0.0 && now >= total - 1e-3) {
+            completed_[id] = identity;
+        } else if (completed_.count(id) && completed_[id] != identity) {
+            completed_.erase(id);
+        }
+        auto it = completed_.find(id);
+        if (ctx.shared.text_log_closed_frames > 0 && it != completed_.end() && it->second == identity && !reading) {
+            ui.show_text_until(text, now > total ? now : total);
+        }
+    }
+  private:
+    std::map<int, const void *> completed_;
+};
+
+// ---------------------------------------------------------------------------
+// Story images (FR-UI-12 ... FR-UI-14)
+
+class StoryImageUnit : public Unit {
+  public:
+    StoryImageUnit() : Unit("story_images", "story_images", Target::ImageDisplay) {}
+    bool matches(Ui &, Handle) override { return true; }
+    void validate(Ui &ui, Handle root) override {
+        Handle image = need(ui, root, "Image", {Comp::AspectFitter});
+        RectData r = ui.rect(image);
+        expect(r.anchorMin.y == 0.0f && r.anchorMax.y == 1.0f && r.pivot.y == 0.5f,
+               "story image is not stretched vertically");
+        expect(ui.get(image, Comp::AspectFitter, Prop::Enabled) != 0.0 &&
+                   static_cast<int>(ui.get(image, Comp::AspectFitter, Prop::AspectMode)) == kAspectHeightControlsWidth,
+               "story image aspect fitter changed");
+        if (!orig_) orig_ = r;
+    }
+    void apply(Tx &tx, Handle root, const Context &ctx) override {
+        float top = 0;
+        if (ctx.shared.panels_enlarged) {
+            // Panels not seen yet use the values of the verified game build.
+            layout::DialoguePanel d = ctx.shared.dialogue_panel.value_or(layout::DialoguePanel{});
+            layout::DialoguePanel n = ctx.shared.narrator_panel.value_or(layout::DialoguePanel{});
+            top = std::max(layout::dialogue_panel_top(d, ctx.settings.scale),
+                           layout::dialogue_panel_top(n, ctx.settings.scale));
+        } else {
+            top = layout::DialoguePanel{}.panel_bottom + layout::DialoguePanel{}.panel_height;
+        }
+        // FR-UI-13: the aspect fitter keeps the ratio; the top margin stays.
+        tx.set_rect(tx.ui().find(root, "Image"), layout::clear_image_above(*orig_, top));
+    }
+
+  private:
+    std::optional<RectData> orig_;
+};
+
+// ---------------------------------------------------------------------------
+// Text log (FR-UI-15 ... FR-UI-18)
+
+class TextLogUnit : public Unit {
+  public:
+    TextLogUnit() : Unit("text_log", "text_log", Target::TextLog) {}
+    bool matches(Ui &, Handle) override { return true; }
+    // Tracked so the runtime notices when the log closes (FR-UI-19).
+    bool wants_tick() const override { return true; }
+
+    static constexpr const char *kContent = "Scroll View/Viewport/Content";
+    static constexpr const char *kEntry = "Scroll View/Viewport/Content/Text Entry";
+
+    void validate(Ui &ui, Handle root) override {
+        Handle view = need(ui, root, "Scroll View");
+        Handle content = need(ui, root, kContent, {Comp::VLayout});
+        Handle entry = need(ui, root, kEntry, {Comp::VLayout});
+        Handle labels[4];
+        for (int i = 0; i < 4; ++i) {
+            labels[i] = need(ui, entry, kLabels[i].name, {kLabels[i].comp, Comp::SizeFitter});
+            // FR-UI-18: entries must keep fitting their preferred text height.
+            expect(static_cast<int>(ui.get(labels[i], Comp::SizeFitter, Prop::FitVertical)) == kFitPreferred,
+                   std::string("text log '") + kLabels[i].name + "' lost its preferred-height fitter");
+        }
+        if (orig_) return;
+        Originals o;
+        o.view = ui.rect(view);
+        o.content_spacing = static_cast<float>(ui.get(content, Comp::VLayout, Prop::LgSpacing));
+        o.entry_spacing = static_cast<float>(ui.get(entry, Comp::VLayout, Prop::LgSpacing));
+        for (int i = 0; i < 4; ++i) {
+            o.rects[i] = ui.rect(labels[i]);
+            if (kLabels[i].comp == Comp::Tmp) o.tmp[i] = read_tmp(ui, labels[i]);
+            else o.stm[i] = static_cast<float>(ui.get(labels[i], Comp::Stm, Prop::StmSize));
+        }
+        orig_ = o;
+    }
+
+    void apply(Tx &tx, Handle root, const Context &ctx) override {
+        Ui &ui = tx.ui();
+        const Originals &o = *orig_;
+        const double s = ctx.settings.scale;
+        Handle content = ui.find(root, kContent);
+        tx.set(content, Comp::VLayout, Prop::LgSpacing, o.content_spacing * s);
+        // The template and any entries the game already created from it.
+        for (int i = 0, n = ui.child_count(content); i < n; ++i) {
+            Handle entry = ui.child(content, i);
+            if (!ui.has(entry, Comp::VLayout)) continue;  // dividers
+            bool complete = true;
+            for (const auto &l : kLabels) complete = complete && ui.find(entry, l.name);
+            if (!complete) continue;
+            apply_entry(tx, entry, s);
+        }
+        // FR-UI-17: a wider viewport (originally 75 % of the screen).
+        RectData v = o.view;
+        v.anchorMin.x = 0.075f;
+        v.anchorMax.x = 0.925f;
+        tx.set_rect(ui.find(root, "Scroll View"), v);
+    }
+
+  private:
+    struct Label {
+        const char *name;
+        Comp comp;
+    };
+    static constexpr Label kLabels[4] = {
+        {"Char Name", Comp::Tmp}, {"Text", Comp::Stm}, {"Text 2", Comp::Stm}, {"Large Text", Comp::Tmp}};
+
+    struct Originals {
+        RectData view;
+        float content_spacing = 0, entry_spacing = 0;
+        RectData rects[4];
+        TmpSize tmp[4];
+        float stm[4] = {};
+    };
+
+    void apply_entry(Tx &tx, Handle entry, double s) {
+        Ui &ui = tx.ui();
+        const Originals &o = *orig_;
+        tx.set(entry, Comp::VLayout, Prop::LgSpacing, o.entry_spacing * s);
+        for (int i = 0; i < 4; ++i) {
+            Handle label = ui.find(entry, kLabels[i].name);
+            if (kLabels[i].comp == Comp::Tmp) {
+                write_tmp(tx, label, layout::scale_tmp(o.tmp[i], s, false));
+                tx.set(label, Comp::Tmp, Prop::TmpCharacterSpacing, 0);  // FR-UI-16
+            } else {
+                tx.set(label, Comp::Stm, Prop::StmSize, layout::scaled_font(o.stm[i], s));
+                tx.set(label, Comp::Stm, Prop::StmCharacterSpacing, 0);  // FR-UI-16
+            }
+            RectData r = ui.rect(label);
+            r.sizeDelta.y = o.rects[i].sizeDelta.y * static_cast<float>(s);
+            tx.set_rect(label, r);
+        }
+    }
+
+    std::optional<Originals> orig_;
+};
+
+// ---------------------------------------------------------------------------
+// Description that starts beside the picture and continues full-width below it
+// (FR-UI-22 ... FR-UI-24, FR-UI-33). TextMesh Pro's linked overflow does the
+// split: the game keeps writing the localized text to its own component, and
+// the continuation only ever shows what doesn't fit there.
+
+const char *const kContinuationName = "LTM Description Continuation";
+
+// Shows the continuation only while there is overflow and sizes it to the
+// rendered overflow text. Returns its height (0 when hidden).
+float sync_continuation(Ui &ui, Handle head, Handle continuation) {
+    ui.update_text(head, Comp::Tmp);
+    bool overflow = ui.get(head, Comp::Tmp, Prop::TmpOverflowing) != 0.0;
+    if (ui.active_self(continuation) != overflow) ui.set_active(continuation, overflow);
+    if (!overflow) return 0.0f;
+    ui.update_text(continuation, Comp::Tmp);
+    float h = std::ceil(sane_height(ui.get(continuation, Comp::Tmp, Prop::TmpRenderedHeight)));
+    RectData r = ui.rect(continuation);
+    if (!near(r.sizeDelta.y, h, 0.5f)) {
+        r.sizeDelta.y = h;
+        ui.set_rect(continuation, r);
+    }
+    return h;
+}
+
+// Detail rows take their text's preferred height, or none when empty.
+// Returns the total height of the rows.
+float sync_rows(Ui &ui, Handle fields, const char *names, const char *values, float spacing) {
+    float total = 0;
+    int shown = 0;
+    for (int i = 0, n = ui.child_count(fields); i < n; ++i) {
+        Handle row = ui.child(fields, i);
+        if (!ui.active_self(row)) continue;
+        Handle a = ui.find(row, names);
+        Handle b = ui.find(row, values);
+        if (!a || !b) continue;
+        float h = std::ceil(std::max(sane_height(ui.get(a, Comp::Tmp, Prop::TmpPreferredHeight)),
+                                     sane_height(ui.get(b, Comp::Tmp, Prop::TmpPreferredHeight))));
+        RectData r = ui.rect(row);
+        if (!near(r.sizeDelta.y, h, 0.5f)) {
+            r.sizeDelta.y = h;
+            ui.set_rect(row, r);
+        }
+        total += h;
+        ++shown;
+    }
+    if (shown > 1) total += spacing * static_cast<float>(shown - 1);
+    return total;
+}
+
+void set_height(Ui &ui, Handle go, float h) {
+    RectData r = ui.rect(go);
+    if (!near(r.sizeDelta.y, h, 0.5f)) {
+        r.sizeDelta.y = h;
+        ui.set_rect(go, r);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Evidence menu: Clues, Spells and People share one display (FR-UI-20 ... 28)
+
+class EvidenceMenuUnit : public Unit {
+  public:
+    EvidenceMenuUnit() : Unit("evidence_menu", "evidence_menu", Target::ItemMenu) {}
+    bool matches(Ui &, Handle) override { return true; }
+    bool wants_tick() const override { return true; }
+
+    static constexpr const char *kBase = "Container/Right/Container";
+
+    void validate(Ui &ui, Handle root) override {
+        Handle base = need(ui, root, kBase);
+        Handle top = need(ui, base, "Top", {Comp::HLayout});
+        Handle icon = need(ui, base, "Top/Icon", {Comp::AspectFitter});
+        Handle info = need(ui, base, "Top/Item Info");
+        need(ui, base, "Top/Item Info/Item Name", {Comp::Tmp});
+        Handle fields = need(ui, base, "Top/Item Info/Fields", {Comp::VLayout});
+        need(ui, base, "Top/Item Info/View Button", {Comp::Button});
+        Handle description = need(ui, base, "Description", {Comp::Tmp});
+        expect(ui.parent(icon) == top && ui.parent(info) == top, "evidence picture layout changed");
+        if (ui.find(base, "LTM Evidence Lower")) throw AlreadyApplied();
+        if (orig_) return;
+        Originals o;
+        o.description = ui.rect(description);
+        o.description_text = read_tmp(ui, description);
+        o.fields_spacing = static_cast<float>(ui.get(fields, Comp::VLayout, Prop::LgSpacing));
+        RectData name = ui.rect(ui.find(base, "Top/Item Info/Item Name"));
+        o.name_bottom = name.anchoredPosition.y - name.sizeDelta.y;  // top-anchored, top pivot
+        expect(name.anchorMin.y == 1.0f && name.anchorMax.y == 1.0f && name.pivot.y == 1.0f,
+               "evidence item name is not top-anchored");
+        orig_ = o;
+    }
+
+    void apply(Tx &tx, Handle root, const Context &ctx) override {
+        Ui &ui = tx.ui();
+        const Originals &o = *orig_;
+        Handle base = ui.find(root, kBase);
+        Handle top = ui.find(base, "Top");
+        Handle icon = ui.find(base, "Top/Icon");
+        Handle info = ui.find(base, "Top/Item Info");
+        Handle fields = ui.find(base, "Top/Item Info/Fields");
+        Handle view = ui.find(base, "Top/Item Info/View Button");
+        Handle description = ui.find(base, "Description");
+
+        // FR-UI-20/23: larger text, no automatic shrinking, same size in both parts.
+        TmpSize t = layout::scale_tmp(o.description_text, ctx.settings.scale, true);
+        t.auto_size = false;
+        write_tmp(tx, description, t);
+
+        // The continuation is a copy of the description (same font, size,
+        // localization font switcher), that renders the overflow below.
+        Handle lower = tx.create("LTM Evidence Lower", base);
+        tx.set_rect(lower, o.description);
+        tx.add(lower, Comp::VLayout);
+        tx.set(lower, Comp::VLayout, Prop::LgSpacing, 15);
+        tx.set(lower, Comp::VLayout, Prop::LgChildAlignment, 0);  // upper left
+        tx.set(lower, Comp::VLayout, Prop::LgControlWidth, 1);
+        tx.set(lower, Comp::VLayout, Prop::LgControlHeight, 0);
+        tx.set(lower, Comp::VLayout, Prop::LgExpandWidth, 1);
+        tx.set(lower, Comp::VLayout, Prop::LgExpandHeight, 0);
+        Handle continuation = tx.clone(description, lower, kContinuationName);
+        tx.set(continuation, Comp::Tmp, Prop::TmpOverflowMode, kOverflowOverflow);
+        if (ui.has(continuation, Comp::SizeFitter)) tx.set(continuation, Comp::SizeFitter, Prop::Enabled, 0);
+
+        // FR-UI-25: details and View follow below the description.
+        tx.set_parent(fields, lower, -1);
+        tx.set_parent(view, lower, -1);
+
+        // FR-UI-22: the description starts left of the picture, below the name.
+        tx.set_parent(description, info, 1);
+        RectData d;
+        d.anchorMin = {0, 0};
+        d.anchorMax = {1, 1};
+        d.pivot = {0.5f, 1};
+        float head_top = o.name_bottom - 10.0f;
+        d.anchoredPosition = {0, head_top};
+        d.sizeDelta = {0, head_top};
+        tx.set_rect(description, d);
+        tx.set(description, Comp::Tmp, Prop::TmpOverflowMode, kOverflowLinked);
+        tx.set_linked_text(description, continuation);
+
+        // FR-UI-21: picture on the right. FR-UI-27: it keeps its square size.
+        tx.set_parent(icon, top, -1);
+        tx.set(top, Comp::HLayout, Prop::LgExpandWidth, 0);
+    }
+
+    void tick(Ui &ui, Handle root, const Context &) override {
+        if (!ui.active_in_hierarchy(root)) return;
+        Handle base = ui.find(root, kBase);
+        Handle top = ui.find(base, "Top");
+        Handle icon = ui.find(base, "Top/Icon");
+        Handle info = ui.find(base, "Top/Item Info");
+        Handle head = ui.find(base, "Top/Item Info/Description");
+        Handle lower = ui.find(base, "LTM Evidence Lower");
+        if (!top || !icon || !info || !head || !lower) throw Mismatch("evidence menu structure changed at runtime");
+        Handle continuation = ui.find(lower, kContinuationName);
+        Handle fields = ui.find(lower, "Fields");
+        if (!continuation || !fields) throw Mismatch("evidence menu structure changed at runtime");
+
+        // The text column fills the space left of the square picture.
+        float spacing = static_cast<float>(ui.get(top, Comp::HLayout, Prop::LgSpacing));
+        float width = std::max(0.0f, ui.rect_size(top).x - ui.rect_size(icon).x - spacing);
+        RectData i = ui.rect(info);
+        if (!near(i.sizeDelta.x, width, 0.5f)) {
+            i.sizeDelta.x = width;
+            ui.set_rect(info, i);
+        }
+
+        // Re-measure only when the text or the available width changed.
+        const void *id = ui.text_identity(head, Comp::Tmp);
+        if (id != last_text_ || !near(width, last_width_, 0.5f) || ++frames_ >= 30) {
+            last_text_ = id;
+            last_width_ = width;
+            frames_ = 0;
+            sync_continuation(ui, head, continuation);
+            set_height(ui, fields, sync_rows(ui, fields, "Item Field Names", "Item Field Values", orig_->fields_spacing));
+        }
+    }
+
+  private:
+    struct Originals {
+        RectData description;
+        TmpSize description_text;
+        float fields_spacing = 0;
+        float name_bottom = 0;
+    };
+    std::optional<Originals> orig_;
+    const void *last_text_ = nullptr;
+    float last_width_ = -1;
+    int frames_ = 0;
+};
+
+// ---------------------------------------------------------------------------
+// "Obtained evidence!" / "Evidence updated!" (FR-UI-29 ... FR-UI-35)
+
+class NotificationUnit : public Unit {
+  public:
+    NotificationUnit() : Unit("evidence_notification", "evidence_notification", Target::Notification) {}
+    bool matches(Ui &, Handle) override { return true; }
+    bool wants_tick() const override { return true; }
+
+    void validate(Ui &ui, Handle root) override {
+        Handle window = need(ui, root, "Window", {Comp::VLayout, Comp::SizeFitter});
+        Handle header = need(ui, root, "Window/Header", {Comp::Tmp});
+        Handle top = need(ui, root, "Window/Top");
+        Handle icon = need(ui, root, "Window/Top/Icon");
+        need(ui, root, "Window/Top/Item Info");
+        Handle name = need(ui, root, "Window/Top/Item Info/Item Name", {Comp::Tmp});
+        Handle fields = need(ui, root, "Window/Top/Item Info/Item Fields", {Comp::VLayout});
+        Handle description = need(ui, root, "Window/Description", {Comp::Tmp});
+        if (ui.find(root, std::string("Window/") + kContinuationName)) throw AlreadyApplied();
+        expect(ui.get(window, Comp::VLayout, Prop::LgControlHeight) == 0.0, "notification layout changed");
+        if (orig_) return;
+        Originals o;
+        o.window = ui.rect(window);
+        o.header = ui.rect(header);
+        o.header_text = read_tmp(ui, header);
+        o.top = ui.rect(top);
+        o.icon = ui.rect(icon);
+        o.name = ui.rect(name);
+        o.name_text = read_tmp(ui, name);
+        o.description_text = read_tmp(ui, description);
+        o.fields_spacing = static_cast<float>(ui.get(fields, Comp::VLayout, Prop::LgSpacing));
+        for (int i = 0, n = ui.child_count(fields); i < n; ++i) {
+            Handle row = ui.child(fields, i);
+            for (const char *label : {"Item Field Names", "Item Field Values"}) {
+                Handle l = ui.find(row, label);
+                if (l && ui.has(l, Comp::Tmp)) o.row_text[label] = read_tmp(ui, l);
+            }
+        }
+        expect(o.row_text.size() == 2, "notification detail rows changed");
+        expect(o.icon.sizeDelta.x > 1.0f && o.icon.sizeDelta.y > 1.0f, "unexpected notification picture size");
+        orig_ = o;
+    }
+
+    void apply(Tx &tx, Handle root, const Context &ctx) override {
+        Ui &ui = tx.ui();
+        const Originals &o = *orig_;
+        const double s = ctx.settings.scale;
+        Handle window = ui.find(root, "Window");
+        Handle header = ui.find(root, "Window/Header");
+        Handle top = ui.find(root, "Window/Top");
+        Handle icon = ui.find(root, "Window/Top/Icon");
+        Handle info = ui.find(root, "Window/Top/Item Info");
+        Handle name = ui.find(root, "Window/Top/Item Info/Item Name");
+        Handle fields = ui.find(root, "Window/Top/Item Info/Item Fields");
+        Handle description = ui.find(root, "Window/Description");
+
+        // FR-UI-30: wider panel. FR-UI-35: the height fits the contents.
+        RectData w = o.window;
+        w.anchorMin.x = 0.075f;
+        w.anchorMax.x = 0.925f;
+        tx.set_rect(window, w);
+        tx.set(window, Comp::SizeFitter, Prop::FitVertical, kFitPreferred);
+
+        // FR-UI-31
+        write_tmp(tx, header, layout::scale_heading(o.header_text, s));
+        RectData h = o.header;
+        h.sizeDelta.y = layout::heading_height(o.header.sizeDelta.y, s, o.window.anchorMax.y);
+        tx.set_rect(header, h);
+
+        // FR-UI-32
+        write_tmp(tx, name, layout::scale_tmp(o.name_text, s, true));
+        RectData n = o.name;
+        n.sizeDelta.y = o.name.sizeDelta.y * static_cast<float>(s);
+        tx.set_rect(name, n);
+        for (int i = 0, count = ui.child_count(fields); i < count; ++i) {
+            Handle row = ui.child(fields, i);
+            for (const auto &entry : o.row_text) {
+                Handle l = ui.find(row, entry.first);
+                if (l && ui.has(l, Comp::Tmp)) write_tmp(tx, l, layout::scale_tmp(entry.second, s, true));
+            }
+        }
+        TmpSize t = layout::scale_tmp(o.description_text, s, false);
+        t.auto_size = false;
+        write_tmp(tx, description, t);
+        // The parent layout now sizes the text; its own fitter would fight it.
+        if (ui.has(description, Comp::SizeFitter)) tx.set(description, Comp::SizeFitter, Prop::Enabled, 0);
+
+        // FR-UI-33: fixed square picture on the right, text to its left.
+        const float gap = 30.0f;
+        RectData ic = o.icon;
+        ic.anchorMin = ic.anchorMax = {1, 1};
+        ic.pivot = {1, 1};
+        ic.anchoredPosition = {0, 0};
+        tx.set_rect(icon, ic);
+        RectData in;
+        in.anchorMin = {0, 0};
+        in.anchorMax = {1, 1};
+        in.pivot = {0.5f, 1};
+        in.sizeDelta = {-(o.icon.sizeDelta.x + gap), 0};
+        in.anchoredPosition = {-(o.icon.sizeDelta.x + gap) / 2.0f, 0};
+        tx.set_rect(info, in);
+        RectData tp = o.top;
+        tp.sizeDelta.y = std::max(o.top.sizeDelta.y, o.icon.sizeDelta.y);
+        tx.set_rect(top, tp);
+
+        int top_index = ui.sibling_index(top);
+        Handle continuation = tx.clone(description, window, kContinuationName);
+        tx.set_parent(continuation, window, top_index + 1);
+        tx.set(continuation, Comp::Tmp, Prop::TmpOverflowMode, kOverflowOverflow);
+        // FR-UI-34: details below the description, full width.
+        tx.set_parent(fields, window, top_index + 2);
+
+        tx.set_parent(description, info, 1);
+        float head_top = n.anchoredPosition.y - n.sizeDelta.y - 10.0f;
+        RectData d;
+        d.anchorMin = {0, 0};
+        d.anchorMax = {1, 1};
+        d.pivot = {0.5f, 1};
+        d.anchoredPosition = {0, head_top};
+        d.sizeDelta = {0, head_top};
+        tx.set_rect(description, d);
+        tx.set(description, Comp::Tmp, Prop::TmpOverflowMode, kOverflowLinked);
+        tx.set_linked_text(description, continuation);
+    }
+
+    void tick(Ui &ui, Handle root, const Context &) override {
+        if (!ui.active_in_hierarchy(root)) return;
+        Handle head = ui.find(root, "Window/Top/Item Info/Description");
+        Handle continuation = ui.find(root, std::string("Window/") + kContinuationName);
+        Handle fields = ui.find(root, "Window/Item Fields");
+        if (!head || !continuation || !fields) throw Mismatch("notification structure changed at runtime");
+        const void *id = ui.text_identity(head, Comp::Tmp);
+        if (id != last_text_ || ++frames_ >= 30) {
+            last_text_ = id;
+            frames_ = 0;
+            sync_continuation(ui, head, continuation);
+            set_height(ui, fields, sync_rows(ui, fields, "Item Field Names", "Item Field Values", orig_->fields_spacing));
+        }
+    }
+
+  private:
+    struct Originals {
+        RectData window, header, top, icon, name;
+        TmpSize header_text, name_text, description_text;
+        std::map<std::string, TmpSize> row_text;
+        float fields_spacing = 0;
+    };
+    std::optional<Originals> orig_;
+    const void *last_text_ = nullptr;
+    int frames_ = 0;
+};
+
+}  // namespace
+
+std::vector<std::unique_ptr<Unit>> make_units() {
+    std::vector<std::unique_ptr<Unit>> units;
+    units.push_back(std::make_unique<DialogueBoxUnit>("dialogue_box", "dialogue_box", BoxKind::Dialogue));
+    units.push_back(std::make_unique<DialogueBoxUnit>("narrator_box", "dialogue_box", BoxKind::Narrator));
+    units.push_back(std::make_unique<DialogueBoxUnit>("cross_examination", "cross_examination", BoxKind::Testimony));
+    units.push_back(std::make_unique<LineRestoreUnit>());
+    units.push_back(std::make_unique<StoryImageUnit>());
+    units.push_back(std::make_unique<TextLogUnit>());
+    units.push_back(std::make_unique<EvidenceMenuUnit>());
+    units.push_back(std::make_unique<NotificationUnit>());
+    return units;
+}
+
+}  // namespace ltm

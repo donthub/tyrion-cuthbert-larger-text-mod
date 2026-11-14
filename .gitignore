@@ -1,5 +1,5 @@
-__pycache__
-backup
-state.json
-validation.json
+.tools/
+build/
 dist/
+__pycache__/
+*.pyc

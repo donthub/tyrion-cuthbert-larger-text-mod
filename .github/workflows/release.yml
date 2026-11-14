@@ -1,12 +1,18 @@
+# Publishes a GitHub release when a version tag is pushed.
+#   vX.Y.Z          -> normal (latest stable) release
+#   vX.Y.Z-suffix   -> prerelease (e.g. v2.0.0-rc.1)
+# The runtime is built and all tests run before packaging; any failure stops the release.
+# An existing release is never replaced. Only the built-in GITHUB_TOKEN is used.
 name: Release
 
 on:
   push:
     tags:
-      - 'v*'
+      - "v*.*.*"
+      - "v*.*.*-*"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -15,32 +21,60 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      RELEASE_TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          persist-credentials: false
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.10'
-      - name: Run regression tests
-        run: python -m unittest discover -s tests -v
-      - name: Build platform archives
-        run: python scripts/package_release.py "$RELEASE_TAG"
-      - name: Publish GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+          python-version: "3.12"
+
+      - name: Determine version
+        id: version
         shell: bash
         run: |
-          flags=()
-          if [[ "$RELEASE_TAG" == *-* ]]; then
-            flags+=(--prerelease)
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$tag' is not vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-suffix"
+            exit 1
           fi
-          gh release create "$RELEASE_TAG" \
-            "dist/TyrionCuthbertLargerTextMod-${RELEASE_TAG}-Windows.zip" \
-            "dist/TyrionCuthbertLargerTextMod-${RELEASE_TAG}-Linux-SteamDeck.tar.gz" \
-            --verify-tag --generate-notes --title "$RELEASE_TAG" "${flags[@]}"
+          version="${tag#v}"
+          if [[ "$version" == *-* ]]; then prerelease=true; else prerelease=false; fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse to replace an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists; it is never replaced."
+            exit 1
+          fi
+
+      - name: Build runtime and run C++ tests
+        run: python scripts/build_runtime.py --version "${{ steps.version.outputs.version }}" --test
+
+      - name: Run Python tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Package
+        run: python scripts/package_release.py --version "${{ steps.version.outputs.version }}" --runtime build/release/version.dll --out dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists; it is never replaced."
+            exit 1
+          fi
+          args=()
+          if [ "$PRERELEASE" = "true" ]; then args+=(--prerelease); fi
+          gh release create "$TAG" dist/*.zip dist/*.tar.gz \
+            --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --verify-tag "${args[@]}"
