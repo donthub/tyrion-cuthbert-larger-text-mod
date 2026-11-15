@@ -3,7 +3,7 @@
 
 | | |
 | --- | --- |
-| Status | Agreed draft, rev. 6: runtime injection, shrink to fit, details beside the picture, description below the picture when there are details and wrapped around it otherwise, padded picture (decisions in §14) |
+| Status | Agreed draft, rev. 7: runtime injection, shrink to fit, details beside the picture, description below the picture when there are details and wrapped around it otherwise, padded picture, in-game settings tab (decisions in §14) |
 | Date | 2026-11-15 |
 | Source | Functionality of the existing `TyrionCuthbertLargerTextMod` project |
 | Purpose | Rebuild the mod from scratch. This document says **what** the mod must do; it does not prescribe code structure, implementation language, libraries or loader. |
@@ -49,12 +49,12 @@ The mod makes the game's text and UI easier to read on small screens, especially
 | --- | --- | --- |
 | UC-1 | Player | Fresh install with the default settings. |
 | UC-2 | Player | Install with a custom scale and/or opacity. |
-| UC-3 | Player | Change the settings by editing the config or re-running Install; the change takes effect at the next game start. |
+| UC-3 | Player | Change the settings in the game's Settings menu (*Mod* tab), by editing the config or by re-running Install; the change takes effect at the next game start. |
 | UC-4 | Player | Uninstall to remove everything the mod added. |
 | UC-5 | Player | Check the installation status. |
 | UC-6 | Player | The game was updated by Steam: nothing to do. Re-run Install only if Status reports that Steam removed some of the mod's files. |
 | UC-7 | Player | Update the mod to the latest release; the new version is active at the next game start. |
-| UC-8 | Player | Temporarily disable the mod, or a single feature, through the config without uninstalling. |
+| UC-8 | Player | Temporarily disable the mod, or a single feature, in the game's Settings menu or through the config, without uninstalling. |
 | UC-9 | Maintainer | Publish a release by pushing a version tag. |
 | UC-10 | Maintainer | Validate the mod in-game and with automated tests. |
 
@@ -122,7 +122,15 @@ All UI changes **shall** be scaled by the chosen *scale*. At runtime they **shal
 - **FR-UI-36** The game shall not keep running while another application has focus, so inputs sent while the game is in the background can't advance dialogue or activate controls. Switching back to the game shall resume it normally.
 - **FR-UI-37** This shall be done at runtime by turning off the engine's "run in background" behaviour. No game file shall be changed for this.
 
-### 3.8 Preserved behaviour
+### 3.8 In-game settings
+- **FR-UI-41** The game's Settings menu shall have an additional tab button labelled **Mod**, placed directly after *Workshop*. Selecting it shall show the mod's settings like the game's own tabs, with the game's look and its mouse, keyboard and controller handling.
+- **FR-UI-42** The tab shall offer every config setting of FR-RT-4: the master switch, the scale (at least 1.1 to 2.0 in steps of 0.1), the opacity (a range of steps from 0 to 1 including the default), and one on/off switch per feature. When the tab opens, it shall show the values currently saved in the config. A value that is not one of the offered steps shall be offered too, so opening the tab never changes a setting.
+- **FR-UI-43** A change shall be saved to the config immediately and atomically. Only the changed setting's line shall change; comments, unknown keys and other settings shall be kept (as FR-INST-13). If the config can't be written, the error is logged and the game is unaffected.
+- **FR-UI-44** Changes shall take effect at the next game start (FR-RT-5). The tab shall say so.
+- **FR-UI-45** The tab shall not read or change the game's own settings, and shall not change the game's other tabs.
+- **FR-UI-46** The tab shall be available when the master switch is off, so the mod can be switched back on in the game (FR-RT-10). It shall follow FR-RT-6 and FR-RT-7: if the menu is not as expected, no button or tab is added and the reason is logged.
+
+### 3.9 Preserved behaviour
 - **FR-UI-38** Dialogue choices and unrelated menus shall keep their existing text size and layout.
 - **FR-UI-39** All changed elements shall keep their localization, controllers, layout fitters, images, and button and event references.
 - **FR-UI-40** Save files shall never be read or written.
@@ -135,14 +143,14 @@ All UI changes **shall** be scaled by the chosen *scale*. At runtime they **shal
 - **FR-RT-2** If any one-time platform step is unavoidable (e.g. a Steam launch option needed under Proton), Install shall print the exact instructions and the README shall document them. The step shall not be needed again after mod updates.
 - **FR-RT-3** At startup the runtime component shall read the config. Values that are missing, malformed or out of range shall fall back to their defaults, and a warning shall be logged. A broken config shall never stop the game from starting.
 - **FR-RT-4** The config shall contain at least: *scale*, *opacity*, a master *enabled* switch, and one switch per feature. All of these shall be documented in the config file itself (comments) and in the README.
-- **FR-RT-5** Config changes shall take effect at the next game start.
+- **FR-RT-5** Config changes, including those made in the in-game settings tab (§3.8), shall take effect at the next game start.
 - **FR-RT-6** Before changing anything, each feature shall check that the UI structure it relies on is present and as expected. On a mismatch, only that feature shall be skipped, its partial changes shall not be left behind, and the reason shall be logged. All other features shall still be applied.
 - **FR-RT-7** The runtime component shall never let an error propagate into the game. It shall catch errors per feature, log them, and disable only the affected feature for the rest of the session.
 - **FR-RT-8** The log shall be written to the mod folder and overwritten (or rotated) at each start, so it can't grow without limit. It shall record the mod version, the effective settings, the detected game and engine versions, which features were applied, and which were skipped and why.
 - **FR-RT-9** The runtime component shall have no noticeable effect on frame rate, loading times or input latency.
-- **FR-RT-10** When the master switch is off, the runtime component shall change nothing and leave the game exactly as it would be without the mod.
+- **FR-RT-10** When the master switch is off, the runtime component shall change nothing and leave the game exactly as it would be without the mod, except for the in-game settings tab (FR-UI-46).
 - **FR-RT-11** A game update shall not need a new build of the mod as long as the UI structure checks still pass.
-- **FR-RT-12** The runtime component shall make no network connections and shall not write anywhere except its log.
+- **FR-RT-12** The runtime component shall make no network connections and shall not write anywhere except its log and, when the player changes a setting in the game (FR-UI-43), its config.
 
 ---
 
@@ -282,6 +290,8 @@ All UI changes **shall** be scaled by the chosen *scale*. At runtime they **shal
 ### 12.1 Automated tests (no game files needed)
 These tests shall run in CI. They shall cover:
 - config parsing: defaults, valid values, out-of-range, malformed and missing values, and unknown keys being kept;
+- config writing by the runtime: only the changed line changes, comments, unknown keys, BOM and line endings are kept, missing keys and sections are added, and the result reads back as intended;
+- the in-game settings tab, using a stand-in Settings menu: the button follows Workshop, the tab is registered once, it shows the saved values (including values off the offered steps), a change saves only that setting, it works with the master switch off, and a mismatch or error leaves nothing behind;
 - layout calculations implemented as pure functions (panel heights, margins, image clearance, column splits, shrink-to-fit sizes and limits) at several scales;
 - shrink to fit (FR-UI-0d): text that fits keeps the enlarged size, text that doesn't shrinks just enough, never below the game's own size, and split text keeps one size in all parts;
 - the runtime feature framework, using stand-in UI structures: each feature applies once and never compounds; a structure mismatch skips only that feature without leaving partial changes; an exception in one feature leaves the others working; the master switch off means no changes;
@@ -303,6 +313,7 @@ These tests shall run in CI. They shall cover:
 - Notifications: trigger both "Obtained" and "Updated" variants with short and long text, with and without detail fields. Check that the details sit beside the picture under the item name, that the description starts below the picture when there are details and wraps around it when there are none, and that the picture's left and bottom padding match its gap to the panel edge, as in the evidence menu. At scale 2.0, check that a long entry stays on the screen.
 - Story images and building plans: check that they don't overlap the dialogue or narrator box.
 - Scene changes and reloading a save: check the changes are still applied and haven't compounded.
+- Settings menu, from the title screen and from the pause menu: *Mod* follows *Workshop*; the tab opens with the mouse, keyboard and controller and its dropdowns work with each; every change appears in `config.ini` with the comments kept and is active after a restart; with the master switch off the tab is still there; the game's own tabs keep working and keep their values.
 - Focus: switch away during dialogue, press the advance and menu inputs, then switch back. Check that dialogue hasn't advanced and that controls work again. Do this on Windows and on Proton / Steam Deck.
 
 ---
@@ -338,6 +349,7 @@ These questions were raised while the spec was being written and have been agree
 | D-11 | Detail fields | Detail fields (and the evidence menu's *View* button) stay in their original place beside the picture, under the item name, and take that space: when detail rows are shown, the description starts below the picture (FR-UI-22, FR-UI-25, FR-UI-34). |
 | D-12 | Description around the picture | Without detail rows, the description wraps around the picture like a floating picture: one block with even line spacing, narrower beside the picture and full width below it, with no visible split (FR-UI-22, FR-UI-33). |
 | D-13 | Picture padding | The picture's left and bottom padding equals its gap to the panel edge, like a floating picture's margin (FR-UI-27a). |
+| D-14 | In-game settings | A *Mod* tab in the game's Settings menu, after *Workshop*, edits the config; changes are saved at once and take effect at the next game start, not live (§3.8, FR-RT-5). |
 
 ---
 

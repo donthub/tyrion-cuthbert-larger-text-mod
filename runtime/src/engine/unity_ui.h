@@ -27,6 +27,7 @@ class UnityUi : public Ui {
 
     Handle find(Handle root, const std::string &path) override;
     std::string name(Handle go) override;
+    void set_name(Handle go, const std::string &name) override;
     Handle parent(Handle go) override;
     int sibling_index(Handle go) override;
     int child_count(Handle go) override;
@@ -63,6 +64,20 @@ class UnityUi : public Ui {
     std::string text(Handle go, Comp c) override;
     void show_text_until(Handle go, double read_time) override;
     int enum_value(Handle go, Comp c, Prop p, const std::string &member) override;
+    void set_text(Handle go, const std::string &text) override;
+    void set_dropdown_options(Handle go, const std::vector<std::string> &labels) override;
+    std::string get_string(Handle go, Comp c, const std::string &field) override;
+    void set_string(Handle go, Comp c, const std::string &field, const std::string &value) override;
+    void set_strings(Handle go, Comp c, const std::string &field, const std::vector<std::string> &values) override;
+    Handle holder() override;
+
+    std::vector<std::string> settings_tabs(Handle menu) override;
+    Handle settings_tab_prefab(Handle menu, const std::string &tab) override;
+    void add_settings_tab(Handle menu, const std::string &tab, Handle prefab, Handle button) override;
+    void remove_settings_tab(Handle menu, const std::string &tab) override;
+    std::string current_settings_tab(Handle menu) override;
+    Handle loaded_settings_tab(Handle menu) override;
+    void set_settings_options(Handle tab, const std::vector<Handle> &options) override;
 
     // The GameObject a component belongs to.
     Handle game_object_of(Object *component);
@@ -74,10 +89,13 @@ class UnityUi : public Ui {
     Object *rect_transform(Handle go);
     Object *component(Handle go, Comp c);  // throws when missing
     Class *klass(Comp c);
+    Object *settings_tab_array(Handle menu);
 
     const UnityClasses &k_;
     std::vector<il2cpp::GCHandle> temp_;
     std::map<Handle, std::pair<il2cpp::GCHandle, int>> retained_;
+    Object *holder_ = nullptr;
+    il2cpp::GCHandle holder_handle_ = 0;
 };
 
 }  // namespace ltm::engine

@@ -51,6 +51,9 @@ class Runtime {
     void global_applied(const std::string &key);
     void global_failed(const std::string &key, const std::string &reason);
 
+    // Where the in-game settings tab saves the config.
+    void set_config_store(ConfigStore *store) { shared_.config = store; }
+
     std::vector<UnitStatus> statuses() const;
     // True while any unit wants per-frame maintenance.
     bool wants_frames() const;

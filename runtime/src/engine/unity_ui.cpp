@@ -33,6 +33,13 @@ const ClassName kCompClasses[] = {
     {"Courtroom", "ItemMenu"},
     {"Courtroom", "AddItemDisplay"},
     {"VisualNovel", "ImageDisplay"},
+    {"UIBase", "SettingsMenu"},
+    {"UIBase", "SettingsTab"},
+    {"UIBase", "LoadTabOnSelect"},
+    {"UIBase", "LocalizedText"},
+    {"UIBase", "SetActiveOnPlatforms"},
+    {"UIBase", "CustomSettingDropdown"},
+    {"TMPro", "TMP_Dropdown"},
 };
 static_assert(sizeof(kCompClasses) / sizeof(kCompClasses[0]) == static_cast<size_t>(Comp::Count), "classes");
 
@@ -79,6 +86,8 @@ Accessor accessor(Prop p) {
         case Prop::FitHorizontal: return {"get_horizontalFit", "set_horizontalFit", Kind::Int};
         case Prop::FitVertical: return {"get_verticalFit", "set_verticalFit", Kind::Int};
         case Prop::AspectMode: return {"get_aspectMode", "set_aspectMode", Kind::Int};
+        case Prop::DropdownValue: return {"get_value", "SetValueWithoutNotify", Kind::Int};
+        case Prop::DropdownExpanded: return {"get_IsExpanded", nullptr, Kind::Bool};
         default: return {nullptr, nullptr, Kind::Special};
     }
 }
@@ -167,6 +176,10 @@ Handle UnityUi::find(Handle root, const std::string &path) {
     if (path.empty()) return root;
     Object *t = invoke(method(k_.Transform, "Find", 1, {"System.String"}), transform(root), {to_string(path)});
     return t ? game_object_of(t) : nullptr;
+}
+
+void UnityUi::set_name(Handle go, const std::string &object_name) {
+    invoke(method(k_.Object, "set_name", 1), go, {to_string(object_name)});
 }
 
 std::string UnityUi::name(Handle go) {
@@ -503,6 +516,224 @@ int UnityUi::enum_value(Handle go, Comp c, Prop p, const std::string &member) {
     int32_t v = 0;
     il2cpp_field_static_get_value(constant, &v);
     return v;
+}
+
+// --- strings, dropdowns, arrays ------------------------------------------------------
+
+namespace {
+
+Class *system_class(const char *ns, const char *name) {
+    Class *k = find_class(ns, name);
+    if (!k) throw EngineError(std::string("class ") + ns + "." + name + " is unavailable");
+    return k;
+}
+
+FieldInfo *field(Object *obj, const std::string &name) {
+    FieldInfo *f = il2cpp_class_get_field_from_name(il2cpp_object_get_class(obj), name.c_str());
+    if (!f) throw Mismatch(class_name(obj) + " has no field " + name);
+    return f;
+}
+
+Object *get_ref(Object *obj, const std::string &name) {
+    Object *v = nullptr;
+    il2cpp_field_get_value(obj, field(obj, name), &v);
+    return v;
+}
+
+void set_ref(Object *obj, const std::string &name, Object *value) {
+    // il2cpp_field_set_value copies the reference with the GC write barrier.
+    il2cpp_field_set_value(obj, field(obj, name), value);
+}
+
+// System.Array through its managed methods, so element writes go through the
+// runtime (type checks, write barriers, boxing of value-type elements).
+int array_length(Object *array) {
+    Class *k = system_class("System", "Array");
+    return unbox<int32_t>(invoke(method(k, "get_Length", 0), array));
+}
+Object *array_get(Object *array, int index) {
+    int32_t i = index;
+    return invoke(method(system_class("System", "Array"), "GetValue", 1, {"System.Int32"}), array, {&i});
+}
+void array_set(Object *array, int index, Object *value) {
+    int32_t i = index;
+    invoke(method(system_class("System", "Array"), "SetValue", 2, {"System.Object", "System.Int32"}), array, {value, &i});
+}
+Object *array_new(Class *element, int length) {
+    int32_t n = length;
+    Object *a = invoke(method(system_class("System", "Array"), "CreateInstance", 2, {kType, "System.Int32"}), nullptr,
+                       {type_object(element), &n});
+    if (!a) throw EngineError("could not create an array");
+    return a;
+}
+
+}  // namespace
+
+void UnityUi::set_text(Handle go, const std::string &value) {
+    Object *tmp = component(go, Comp::Tmp);
+    invoke(method(il2cpp_object_get_class(tmp), "set_text", 1, {"System.String"}), tmp, {to_string(value)});
+}
+
+void UnityUi::set_dropdown_options(Handle go, const std::vector<std::string> &labels) {
+    Object *dropdown = component(go, Comp::Dropdown);
+    Class *k = il2cpp_object_get_class(dropdown);
+    Object *list = invoke(method(k, "get_options", 0), dropdown);
+    if (!list) throw EngineError("dropdown has no option list");
+    Class *list_class = il2cpp_object_get_class(list);
+    const MethodInfo *add = method(list_class, "Add", 1);
+    Class *option = il2cpp_class_from_type(il2cpp_method_get_param(add, 0));
+    if (!option) throw EngineError("dropdown option class is unavailable");
+    invoke(method(list_class, "Clear", 0), list);
+    for (const std::string &label : labels) {
+        Object *o = il2cpp_object_new(option);
+        if (!o) throw EngineError("could not create a dropdown option");
+        invoke(method(option, ".ctor", 1, {"System.String"}), o, {to_string(label)});
+        invoke(add, list, {o});
+    }
+    invoke(method(k, "RefreshShownValue", 0), dropdown);
+}
+
+std::string UnityUi::get_string(Handle go, Comp c, const std::string &name_) {
+    return to_utf8(reinterpret_cast<String *>(get_ref(component(go, c), name_)));
+}
+
+void UnityUi::set_string(Handle go, Comp c, const std::string &name_, const std::string &value) {
+    set_ref(component(go, c), name_, reinterpret_cast<Object *>(to_string(value)));
+}
+
+void UnityUi::set_strings(Handle go, Comp c, const std::string &name_, const std::vector<std::string> &values) {
+    Object *comp = component(go, c);
+    field(comp, name_);  // check before allocating
+    Object *array = array_new(system_class("System", "String"), static_cast<int>(values.size()));
+    for (size_t i = 0; i < values.size(); ++i) array_set(array, static_cast<int>(i), reinterpret_cast<Object *>(to_string(values[i])));
+    set_ref(comp, name_, array);
+}
+
+Handle UnityUi::holder() {
+    if (holder_ && alive(holder_)) return holder_;
+    Object *go = il2cpp_object_new(k_.GameObject);
+    if (!go) throw EngineError("could not allocate a GameObject");
+    invoke(method(k_.GameObject, ".ctor", 1, {"System.String"}), go, {to_string("LTM Holder")});
+    bool off = false;
+    invoke(method(k_.GameObject, "SetActive", 1), go, {&off});
+    invoke(method(k_.Object, "DontDestroyOnLoad", 1, {kObject}), nullptr, {go});
+    if (holder_) il2cpp_gchandle_free(holder_handle_);
+    holder_handle_ = il2cpp_gchandle_new(go, false);
+    holder_ = go;
+    return go;
+}
+
+// --- the game's Settings menu --------------------------------------------------------
+// UIBase.SettingsMenu.tabs is a SettingsTabInfo[] of {name, prefab, button}.
+
+namespace {
+
+// The object for a reference field of the given type: the GameObject itself or
+// its component of the field's type.
+Object *as_field_value(FieldInfo *f, Object *go, Class *game_object, Class *component_class) {
+    if (!go) return nullptr;
+    Class *k = il2cpp_class_from_type(il2cpp_field_get_type(f));
+    if (k == game_object) return go;
+    Object *c = invoke(method(game_object, "GetComponent", 1, {kType}), go, {type_object(k)});
+    if (!c) throw Mismatch(std::string("object has no ") + il2cpp_class_get_name(k));
+    (void)component_class;
+    return c;
+}
+
+}  // namespace
+
+Object *UnityUi::settings_tab_array(Handle menu) {
+    Object *tabs = get_ref(component(menu, Comp::SettingsMenu), "tabs");
+    if (!tabs) throw Mismatch("the Settings menu has no tab list");
+    return tabs;
+}
+
+std::vector<std::string> UnityUi::settings_tabs(Handle menu) {
+    Object *tabs = settings_tab_array(menu);
+    std::vector<std::string> names;
+    for (int i = 0, n = array_length(tabs); i < n; ++i) {
+        Object *info = array_get(tabs, i);
+        names.push_back(info ? to_utf8(reinterpret_cast<String *>(get_ref(info, "name"))) : "");
+    }
+    return names;
+}
+
+Handle UnityUi::settings_tab_prefab(Handle menu, const std::string &tab) {
+    Object *tabs = settings_tab_array(menu);
+    for (int i = 0, n = array_length(tabs); i < n; ++i) {
+        Object *info = array_get(tabs, i);
+        if (!info || to_utf8(reinterpret_cast<String *>(get_ref(info, "name"))) != tab) continue;
+        Object *prefab = get_ref(info, "prefab");
+        if (!prefab) return nullptr;
+        return is_a(prefab, k_.GameObject) ? pin(prefab) : game_object_of(prefab);
+    }
+    return nullptr;
+}
+
+void UnityUi::add_settings_tab(Handle menu, const std::string &tab, Handle prefab, Handle button) {
+    Object *settings = component(menu, Comp::SettingsMenu);
+    Object *tabs = settings_tab_array(menu);
+    int n = array_length(tabs);
+    if (n == 0) throw Mismatch("the Settings menu has no tabs");
+    Object *first = array_get(tabs, 0);
+    if (!first) throw Mismatch("the Settings menu's first tab is empty");
+    Class *info_class = il2cpp_object_get_class(first);  // SettingsTabInfo (boxed if a struct)
+    Object *info = il2cpp_object_new(info_class);
+    if (!info) throw EngineError("could not create a tab entry");
+    if (!il2cpp_class_is_valuetype(info_class)) {
+        if (const MethodInfo *ctor = find_method(info_class, ".ctor", 0)) invoke(ctor, info);
+    }
+    set_ref(info, "name", reinterpret_cast<Object *>(to_string(tab)));
+    set_ref(info, "prefab", as_field_value(field(info, "prefab"), O(prefab), k_.GameObject, k_.Component));
+    set_ref(info, "button", as_field_value(field(info, "button"), O(button), k_.GameObject, k_.Component));
+    Object *grown = array_new(info_class, n + 1);
+    for (int i = 0; i < n; ++i) array_set(grown, i, array_get(tabs, i));
+    array_set(grown, n, info);
+    set_ref(settings, "tabs", grown);
+}
+
+void UnityUi::remove_settings_tab(Handle menu, const std::string &tab) {
+    Object *settings = component(menu, Comp::SettingsMenu);
+    Object *tabs = settings_tab_array(menu);
+    std::vector<Object *> kept;
+    Class *info_class = nullptr;
+    for (int i = 0, n = array_length(tabs); i < n; ++i) {
+        Object *info = array_get(tabs, i);
+        if (info && !info_class) info_class = il2cpp_object_get_class(info);
+        if (info && to_utf8(reinterpret_cast<String *>(get_ref(info, "name"))) == tab) continue;
+        kept.push_back(info);
+    }
+    if (!info_class || kept.size() == static_cast<size_t>(array_length(tabs))) return;
+    Object *shrunk = array_new(info_class, static_cast<int>(kept.size()));
+    for (size_t i = 0; i < kept.size(); ++i) array_set(shrunk, static_cast<int>(i), kept[i]);
+    set_ref(settings, "tabs", shrunk);
+}
+
+std::string UnityUi::current_settings_tab(Handle menu) {
+    return to_utf8(reinterpret_cast<String *>(get_ref(component(menu, Comp::SettingsMenu), "currentTab")));
+}
+
+Handle UnityUi::loaded_settings_tab(Handle menu) {
+    Object *go = get_ref(component(menu, Comp::SettingsMenu), "loadedTab");
+    if (!go || !alive(go)) return nullptr;
+    return pin(go);
+}
+
+void UnityUi::set_settings_options(Handle tab, const std::vector<Handle> &options) {
+    Object *settings_tab = component(tab, Comp::SettingsTab);
+    FieldInfo *all = field(settings_tab, "allSettings");
+    Class *array_class = il2cpp_class_from_type(il2cpp_field_get_type(all));
+    (void)array_class;
+    Class *option_class = system_class("UIBase", "SettingsOption");
+    Object *array = array_new(option_class, static_cast<int>(options.size()));
+    Object *first = nullptr;
+    for (size_t i = 0; i < options.size(); ++i) {
+        Object *option = component(options[i], Comp::CustomSettingDropdown);
+        if (!first) first = option;
+        array_set(array, static_cast<int>(i), option);
+    }
+    set_ref(settings_tab, "allSettings", array);
+    set_ref(settings_tab, "firstSelect", first);
 }
 
 }  // namespace ltm::engine

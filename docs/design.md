@@ -100,6 +100,35 @@ Loading sequence:
   column inset, and is re-measured with each layout pass. Without such an
   ancestor, or if the gap is not between 0.5 and half the picture's width, the
   game's own gap is kept (row spacing, or 30 in the popup).
+- **In-game settings tab (FR-UI-41 … FR-UI-46).** `UIBase.SettingsMenu` (the
+  "Settings Template" prefab) holds `SettingsTabInfo[] tabs` = `{name, prefab
+  (SettingsTab), button}`; each tab button's `LoadTabOnSelect.tabName` makes the
+  menu instantiate that tab's prefab into its container (`loadedTab`,
+  `currentTab`). `Awake` reopens the tab shown last in the session (static
+  `lastTab`), so the runtime works in a prefix of `SettingsMenu.Awake`, before
+  the game looks the tab up. A second prefix guard replaces a `lastTab` that
+  isn't in the menu (the mod's tab when it couldn't be added) with the first
+  tab; otherwise the game's `Awake` fails and the menu stays broken. The runtime:
+  - copies the "Steam Workshop" button to `LTM Mod` (label "Mod", no
+    `SetActiveOnPlatforms`/`LocalizedText`, `tabName = "LTM Mod"`) right after it.
+    The copy is made below an inactive `DontDestroyOnLoad` holder (`LTM Holder`),
+    so its scripts first run when it is moved into the menu;
+  - builds a tab prefab once per session from the Gameplay tab below the same
+    holder (`LTM Mod Tab`: header, five `Double Dropdown` rows, a note) and
+    registers it in a grown `tabs` array (`System.Array` methods, so element
+    writes go through the runtime). `SettingsTab.allSettings` lists the ten items;
+  - keeps the game's `CustomSettingDropdown` on each item (it opens the list and
+    does the navigation) but skips its `Start`, `ResetSelectedOption` and
+    `OnDropdownOption(int)` for objects named `LTM …` (hooks that don't call the
+    original), because they load and store values in the game's own settings
+    by `settingName`. If these hooks can't be installed, the tab is not added.
+  - When the shown tab is `LTM Mod`, the per-frame tick fills the dropdowns
+    from `config.ini` as it is on disk and then polls `TMP_Dropdown.value`; a
+    change is written with `update_config` (same rules as the installer's
+    `update_config_text`) to `config.ini.tmp` and moved over `config.ini`. It
+    takes effect at the next start (FR-RT-5).
+  - With the master switch off, only this hook, the skips and the frame hook are
+    installed (FR-RT-10).
 - **Unattended in-game checks.** `[debug] commands = true` enables a command file
   (see the README).
 
@@ -158,7 +187,8 @@ pause_when_unfocused = true
 ```
 
 Missing, malformed or out-of-range values fall back to the default and are logged
-as warnings by the runtime.
+as warnings by the runtime. The in-game *Mod* tab rewrites only the line of the
+setting that changed (adding it at the end of its section if missing).
 
 ## manifest.json
 
@@ -196,6 +226,8 @@ FEATURE <key> skipped: <reason>
 FEATURE <key> failed: <reason>
 FEATURE <key> disabled
 ```
+
+The in-game settings tab reports as `settings_menu`; it has no config switch.
 
 A feature is reported `applied` once, when it is applied to the first instance.
 `skipped` means a UI structure mismatch, `failed` means an internal error. Both

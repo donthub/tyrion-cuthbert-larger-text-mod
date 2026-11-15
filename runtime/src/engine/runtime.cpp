@@ -3,6 +3,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstdio>
@@ -115,15 +116,18 @@ void guarded(F &&f) {
 // --- hooks --------------------------------------------------------------------
 
 // Detour shapes, by managed signature. IL2CPP passes the MethodInfo last.
-enum class Shape { Instance0, InstanceStr1, InstanceRet0, InstanceRetStr2, InstanceRetStr3, Static0 };
+enum class Shape { Instance0, InstanceStr1, InstanceRet0, InstanceRetStr2, InstanceRetStr3, Static0, InstanceInt1 };
 
 using Handler = std::function<void(Object *self)>;
+// Returns true to skip the original method (and the other handlers) for `self`.
+using Skip = std::function<bool(Object *self)>;
 
 struct Slot {
     void *target = nullptr;
     void *original = nullptr;
     Shape shape = Shape::Instance0;
     std::vector<Handler> prefix, postfix;
+    std::vector<Skip> skip;
 };
 
 constexpr int kSlots = 16;
@@ -137,11 +141,34 @@ void run(std::vector<Handler> &handlers, Object *self) {
     });
 }
 
+// Never throws; a failing check doesn't skip.
+bool skipped(Slot &s, Object *self) {
+    if (s.skip.empty() || !self || !g_ui) return false;
+    bool result = false;
+    try {
+        for (auto &f : s.skip)
+            if (f(self)) {
+                result = true;
+                break;
+            }
+    } catch (...) {
+        result = false;
+    }
+    if (!g_busy) {
+        try {
+            g_ui->end_call();
+        } catch (...) {
+        }
+    }
+    return result;
+}
+
 using String = il2cpp::String;
 
 template <int N>
 void d_instance0(Object *self, const MethodInfo *mi) {
     Slot &s = g_slots[N];
+    if (skipped(s, self)) return;
     run(s.prefix, self);
     reinterpret_cast<void (*)(Object *, const MethodInfo *)>(s.original)(self, mi);
     run(s.postfix, self);
@@ -179,6 +206,14 @@ Object *d_instance_ret_str3(Object *self, String *a, String *b, String *c, const
     return r;
 }
 template <int N>
+void d_instance_int1(Object *self, int32_t a, const MethodInfo *mi) {
+    Slot &s = g_slots[N];
+    if (skipped(s, self)) return;
+    run(s.prefix, self);
+    reinterpret_cast<void (*)(Object *, int32_t, const MethodInfo *)>(s.original)(self, a, mi);
+    run(s.postfix, self);
+}
+template <int N>
 void d_static0(const MethodInfo *mi) {
     Slot &s = g_slots[N];
     run(s.prefix, nullptr);
@@ -194,13 +229,16 @@ void *detour_for(Shape shape, int n, std::integer_sequence<int, I...>) {
         {reinterpret_cast<void *>(&d_instance_ret_str2<I>)...},
         {reinterpret_cast<void *>(&d_instance_ret_str3<I>)...},
         {reinterpret_cast<void *>(&d_static0<I>)...},
+        {reinterpret_cast<void *>(&d_instance_int1<I>)...},
     };
     return tables[static_cast<int>(shape)][n];
 }
 
 // Hooks a managed method. The handler runs before (prefix) or after the
-// original. Methods that the compiler folded into one body share a slot.
-bool hook(const MethodInfo *m, Shape shape, bool prefix, Handler handler, std::string &error) {
+// original; a skip check can suppress the original for some objects (only
+// Instance0 and InstanceInt1 hooks check it). Methods that the compiler folded
+// into one body share a slot.
+bool hook(const MethodInfo *m, Shape shape, bool prefix, Handler handler, std::string &error, Skip skip = nullptr) {
     void *target = engine::method_pointer(m);
     if (!target) {
         error = "method has no code";
@@ -213,7 +251,8 @@ bool hook(const MethodInfo *m, Shape shape, bool prefix, Handler handler, std::s
             error = "method body shared with an incompatible method";
             return false;
         }
-        (prefix ? s.prefix : s.postfix).push_back(std::move(handler));
+        if (handler) (prefix ? s.prefix : s.postfix).push_back(std::move(handler));
+        if (skip) s.skip.push_back(std::move(skip));
         return true;
     }
     if (g_slot_count == kSlots) {
@@ -224,7 +263,8 @@ bool hook(const MethodInfo *m, Shape shape, bool prefix, Handler handler, std::s
     Slot &s = g_slots[n];
     s.target = target;
     s.shape = shape;
-    (prefix ? s.prefix : s.postfix).push_back(std::move(handler));
+    if (handler) (prefix ? s.prefix : s.postfix).push_back(std::move(handler));
+    if (skip) s.skip.push_back(std::move(skip));
     void *detour = detour_for(shape, n, std::make_integer_sequence<int, kSlots>{});
     MH_STATUS st = MH_CreateHook(target, detour, &s.original);
     if (st == MH_OK) st = MH_EnableHook(target);
@@ -246,6 +286,7 @@ Comp comp_of(Target t) {
         case Target::ItemMenu: return Comp::ItemMenu;
         case Target::Notification: return Comp::AddItemDisplay;
         case Target::ImageDisplay: return Comp::ImageDisplay;
+        case Target::SettingsMenu: return Comp::SettingsMenu;
     }
     return Comp::Count;
 }
@@ -604,10 +645,114 @@ const HookSpec kHooks[] = {
     {Target::Notification, "Courtroom", "AddItemDisplay", "YarnUpdateItem", 3, Shape::InstanceRetStr3, true},
     {Target::ImageDisplay, "VisualNovel", "ImageDisplay", "SetImage", 1, Shape::InstanceStr1, true},
     {Target::ImageDisplay, "UIBase", "GUIObject", "Show", 0, Shape::InstanceRet0, true},
+    // Before Awake: Awake reopens the tab shown last (SettingsMenu.lastTab), which
+    // may be the mod's tab, so it must already be registered.
+    {Target::SettingsMenu, "UIBase", "SettingsMenu", "Awake", 0, Shape::Instance0, true},
 };
 
-void install(void *self_module) {
-    (void)self_module;
+// SettingsMenu.lastTab is static: the tab shown last in this session, reopened
+// by the next menu's Awake. If that tab is not in this menu (the mod's tab when
+// it could not be added), the game's Awake fails and the menu stays broken, so
+// fall back to the first tab. Runs before Awake, after the tab was added.
+void forget_missing_last_tab(Object *self) {
+    if (!self || engine::class_name(self) != "UIBase.SettingsMenu") return;
+    il2cpp::FieldInfo *f = il2cpp::il2cpp_class_get_field_from_name(il2cpp::il2cpp_object_get_class(self), "lastTab");
+    if (!f) return;
+    String *last = nullptr;
+    il2cpp::il2cpp_field_static_get_value(f, &last);
+    if (!last) return;
+    std::string name = engine::to_utf8(last);
+    if (name.empty()) return;  // nothing shown yet this session
+    Handle go = g_ui->game_object_of(self);
+    std::vector<std::string> tabs = g_ui->settings_tabs(go);
+    if (tabs.empty() || std::find(tabs.begin(), tabs.end(), name) != tabs.end()) return;
+    il2cpp::il2cpp_field_static_set_value(f, engine::to_string(tabs.front()));
+    g_log.write(Level::Info, "settings menu: last tab '" + name + "' is not available; opening '" + tabs.front() + "'");
+}
+
+// The game's dropdown script stays on the mod's settings (it opens the list and
+// handles navigation), but must not load or store their values in the game's
+// own settings: these methods are skipped for objects named "LTM ...".
+struct SkipSpec {
+    const char *name;
+    int argc;
+    Shape shape;
+};
+const SkipSpec kSkips[] = {
+    {"Start", 0, Shape::Instance0},
+    {"ResetSelectedOption", 0, Shape::Instance0},
+    {"OnDropdownOption", 1, Shape::InstanceInt1},
+};
+
+bool is_mod_object(Object *component) {
+    Handle go = g_ui->game_object_of(component);
+    return go && g_ui->name(go).rfind("LTM ", 0) == 0;
+}
+
+// Installs the skips; false (with the reason) when any is missing.
+bool install_skips(std::string &reason) {
+    Class *k = engine::find_class("UIBase", "CustomSettingDropdown");
+    if (!k) {
+        reason = "CustomSettingDropdown not found";
+        return false;
+    }
+    for (const SkipSpec &spec : kSkips) {
+        const MethodInfo *m = nullptr;
+        // Only the class's own method: a base-class body is shared with other dropdowns.
+        void *it = nullptr;
+        while (const MethodInfo *c = il2cpp::il2cpp_class_get_methods(k, &it)) {
+            if (std::string(il2cpp::il2cpp_method_get_name(c)) == spec.name &&
+                static_cast<int>(il2cpp::il2cpp_method_get_param_count(c)) == spec.argc)
+                m = c;
+        }
+        std::string where = std::string("CustomSettingDropdown.") + spec.name;
+        if (!m) {
+            reason = where + " not found";
+            return false;
+        }
+        std::string error;
+        if (!hook(m, spec.shape, true, nullptr, error, is_mod_object)) {
+            reason = where + ": " + error;
+            return false;
+        }
+    }
+    return true;
+}
+
+// --- config file (written by the in-game settings tab) ---------------------------
+
+class FileStore : public ConfigStore {
+  public:
+    explicit FileStore(std::wstring path) : path_(std::move(path)) {}
+    bool read(std::string &text) override {
+        text.clear();
+        if (GetFileAttributesW(path_.c_str()) == INVALID_FILE_ATTRIBUTES) return true;  // missing: empty
+        if (read_file(path_, text)) return true;
+        g_log.write(Level::Error, "config.ini could not be read; the setting was not saved");
+        return false;
+    }
+    bool write(const std::string &text) override {
+        std::wstring tmp = path_ + L".tmp";
+        FILE *f = _wfopen(tmp.c_str(), L"wb");
+        bool ok = f && std::fwrite(text.data(), 1, text.size(), f) == text.size();
+        if (f) ok = std::fclose(f) == 0 && ok;
+        ok = ok && MoveFileExW(tmp.c_str(), path_.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+        if (!ok) {
+            DeleteFileW(tmp.c_str());
+            g_log.write(Level::Error, "config.ini could not be written (error " + std::to_string(GetLastError()) + ")");
+            return false;
+        }
+        g_log.write(Level::Info, "settings changed in the game; saved to config.ini (active at the next start)");
+        return true;
+    }
+
+  private:
+    std::wstring path_;
+};
+std::unique_ptr<FileStore> g_store;
+
+// `all` = false: only the settings tab (master switch off).
+void install(bool all) {
     g_classes = std::make_unique<engine::UnityClasses>();
     std::vector<std::string> missing = g_classes->resolve();
     for (const std::string &m : missing) g_log.write(Level::Warn, "class not found: " + m);
@@ -625,9 +770,10 @@ void install(void *self_module) {
         return;
     }
 
-    bool hooked[5] = {};
-    std::string reasons[5];
+    bool hooked[kTargetCount] = {};
+    std::string reasons[kTargetCount];
     for (const HookSpec &h : kHooks) {
+        if (!all && h.target != Target::SettingsMenu) continue;
         int t = static_cast<int>(h.target);
         Class *k = engine::find_class(h.ns, h.cls);
         const MethodInfo *m = k ? engine::find_method(k, h.name, h.argc) : nullptr;
@@ -646,7 +792,21 @@ void install(void *self_module) {
             g_log.write(Level::Warn, "hook " + where + ": " + error);
         }
     }
-    for (int t = 0; t < 5; ++t) {
+    {
+        Class *menu = engine::find_class("UIBase", "SettingsMenu");
+        const MethodInfo *awake = menu ? engine::find_method(menu, "Awake", 0) : nullptr;
+        std::string error;
+        if (!awake || !hook(awake, Shape::Instance0, true, forget_missing_last_tab, error))
+            g_log.write(Level::Warn, "settings menu last-tab guard unavailable: " + (awake ? error : "Awake not found"));
+    }
+    std::string skip_reason;
+    if (hooked[static_cast<int>(Target::SettingsMenu)] && !install_skips(skip_reason)) {
+        // Without the skips the game would store the mod's values in its own settings.
+        hooked[static_cast<int>(Target::SettingsMenu)] = false;
+        reasons[static_cast<int>(Target::SettingsMenu)] = skip_reason;
+        g_log.write(Level::Warn, "settings tab: " + skip_reason);
+    }
+    for (int t = 0; t < kTargetCount; ++t) {
         if (!hooked[t]) g_runtime->target_unavailable(static_cast<Target>(t), "no hook point: " + reasons[t]);
     }
 
@@ -658,6 +818,7 @@ void install(void *self_module) {
         g_log.write(Level::Error, "frame hook unavailable: " + error);
         g_runtime->target_unavailable(Target::ItemMenu, "frame hook unavailable");
         g_runtime->target_unavailable(Target::Notification, "frame hook unavailable");
+        g_runtime->target_unavailable(Target::SettingsMenu, "frame hook unavailable");
         g_runtime->global_failed("pause_when_unfocused", "frame hook unavailable");
     }
 }
@@ -756,16 +917,16 @@ void runtime_start(void *self_module, void *game_assembly) {
     g_commands = debug_commands_enabled(text);
     if (g_commands) g_log.write(Level::Warn, "debug command file enabled");
     g_runtime = std::make_unique<Runtime>(s, g_log);
+    g_store = std::make_unique<FileStore>(mod_dir + L"\\config.ini");
+    g_runtime->set_config_store(g_store.get());
     if (!s.enabled) {
-        // FR-RT-10: no hooks, no changes.
-        g_log.write(Level::Info, "master switch is off: the mod changes nothing");
-        g_runtime->report_disabled();
-        g_runtime.reset();
-        return;
+        // FR-RT-10: only the Mod tab in the Settings menu, so the mod can be
+        // switched back on in the game.
+        g_log.write(Level::Info, "master switch is off: the mod changes nothing but adds its settings tab");
     }
     g_runtime->report_disabled();
     try {
-        install(self_module);
+        install(s.enabled);
     } catch (const std::exception &e) {
         g_log.write(Level::Error, std::string("start-up failed: ") + e.what());
         g_runtime.reset();

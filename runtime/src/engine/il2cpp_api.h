@@ -55,7 +55,7 @@ using GCHandle = uintptr_t;
     X(int, il2cpp_field_get_flags, (FieldInfo *))                                          \
     X(void, il2cpp_field_get_value, (Object *, FieldInfo *, void *))                       \
     X(void, il2cpp_field_set_value, (Object *, FieldInfo *, void *))                       \
-    X(void, il2cpp_field_static_get_value, (FieldInfo *, void *))                          \
+    X(void, il2cpp_field_static_get_value, (FieldInfo *, void *))                              X(void, il2cpp_field_static_set_value, (FieldInfo *, void *))                          \
     X(const char *, il2cpp_property_get_name, (const PropertyInfo *))                      \
     X(char *, il2cpp_type_get_name, (const Type *))                                        \
     X(Object *, il2cpp_type_get_object, (const Type *))                                    \

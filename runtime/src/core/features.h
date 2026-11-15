@@ -18,7 +18,8 @@ namespace ltm {
 struct AlreadyApplied {};
 
 // Which game controller announced a new UI instance.
-enum class Target { DialogueBox, TextLog, ItemMenu, Notification, ImageDisplay };
+enum class Target { DialogueBox, TextLog, ItemMenu, Notification, ImageDisplay, SettingsMenu };
+constexpr int kTargetCount = 6;
 
 // State shared between units.
 struct Shared {
@@ -28,6 +29,8 @@ struct Shared {
     int text_log_closed_frames = 0;
     // Whether the panels are being enlarged (dialogue_box switched on and working).
     bool panels_enlarged = true;
+    // Where the in-game settings tab saves to; nullptr: nowhere.
+    ConfigStore *config = nullptr;
 };
 
 struct Context {
@@ -53,6 +56,9 @@ class Unit {
     // Applies the changes through the transaction. Values are absolute and
     // computed from the recorded originals, so applying twice never compounds.
     virtual void apply(Tx &tx, Handle root, const Context &ctx) = 0;
+    // Runs even with the master switch off and has no switch of its own (the
+    // settings tab, so the mod can be switched back on in the game).
+    virtual bool always_on() const { return false; }
     // Per-frame maintenance for instances that need it (text overflow etc.).
     virtual bool wants_tick() const { return false; }
     virtual void tick(Ui &ui, Handle root, const Context &ctx) { (void)ui, (void)root, (void)ctx; }

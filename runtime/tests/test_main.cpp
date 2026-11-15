@@ -2,12 +2,14 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "../src/core/config.h"
 #include "../src/core/framework.h"
 #include "../src/core/layout.h"
+#include "../src/core/mod_settings.h"
 #include "fake_ui.h"
 
 using namespace ltm;
@@ -1001,6 +1003,290 @@ TEST(global_feature_reporting) {
     rt.global_failed("pause_when_unfocused", "icall missing");
     CHECK(!rt.global_enabled("pause_when_unfocused"));
     CHECK(log.has("FEATURE pause_when_unfocused failed: icall missing"));
+}
+
+// --- config writing (in-game settings) -----------------------------------------
+
+TEST(config_update_keeps_comments_and_layout) {
+    std::string text =
+        "\xEF\xBB\xBF; header\r\n[General]\r\nEnabled = true\r\n  Scale=1.5   ; size\r\nopacity = 0.99\r\nfoo = bar\r\n"
+        "\r\n[features]\r\n; c\r\ntext_log = true\r\n";
+    std::string out = update_config(text, {{"general", "scale", "1.8"}, {"features", "text_log", "false"}});
+    CHECK(out ==
+          "\xEF\xBB\xBF; header\r\n[General]\r\nEnabled = true\r\n  Scale=1.8   ; size\r\nopacity = 0.99\r\nfoo = bar\r\n"
+          "\r\n[features]\r\n; c\r\ntext_log = false\r\n");
+    ConfigResult r = parse_config(out);
+    CHECK_NEAR(r.settings.scale, 1.8);
+    CHECK(!r.settings.feature("text_log"));
+    CHECK(update_config(text, {}) == text);
+}
+
+TEST(config_update_adds_missing_keys_and_sections) {
+    std::string out = update_config("[general]\nscale = 1.5\n; trailing comment\n\n[other]\nx = 1",
+                                    {{"general", "opacity", "0.5"}, {"features", "story_images", "false"},
+                                     {"other", "y", "2"}});
+    CHECK(out == "[general]\nscale = 1.5\nopacity = 0.5\n; trailing comment\n\n[other]\nx = 1\ny = 2\n"
+                 "\n[features]\nstory_images = false\n");
+    CHECK(update_config("", {{"general", "enabled", "false"}}) == "\n[general]\nenabled = false\n");
+    ConfigResult r = parse_config(out);
+    CHECK_NEAR(r.settings.opacity, 0.5);
+    CHECK(!r.settings.feature("story_images"));
+}
+
+TEST(config_format_number_like_the_installer) {
+    CHECK(format_number(1.5) == "1.5");
+    CHECK(format_number(2.0) == "2.0");
+    CHECK(format_number(0.0) == "0.0");
+    CHECK(format_number(0.99) == "0.99");
+    CHECK(format_number(1.1) == "1.1");
+    CHECK(format_number(12 / 10.0) == "1.2");
+    Settings s;
+    s.enabled = false;
+    s.features["text_log"] = false;
+    CHECK(config_update(s, "enabled").value == "false");
+    CHECK(config_update(s, "scale").section == "general");
+    CHECK(config_update(s, "text_log").section == "features");
+    CHECK(config_update(s, "text_log").value == "false");
+}
+
+TEST(mod_controls_cover_every_setting) {
+    std::set<std::string> keys;
+    for (const ModControl &c : mod_controls()) keys.insert(c.key);
+    CHECK(keys.count("enabled") && keys.count("scale") && keys.count("opacity"));
+    for (const char *k : kFeatureKeys) CHECK(keys.count(k));
+    CHECK(keys.size() == mod_controls().size());
+}
+
+TEST(mod_choices_round_trip) {
+    Settings s;
+    for (const ModControl &c : mod_controls()) {
+        Choices ch = mod_choices(c.key, s);
+        CHECK(ch.labels.size() == ch.values.size());
+        for (size_t i = 0; i < ch.values.size(); ++i) {
+            Settings t;
+            set_mod_value(c.key, ch.values[i], t);
+            CHECK(ch.index_of(mod_value(c.key, t)) == static_cast<int>(i));
+        }
+    }
+    Choices scale = mod_choices("scale", s);
+    CHECK(scale.values.size() == 10);
+    CHECK(scale.labels[scale.index_of(1.5)] == "1.5x");
+    CHECK(mod_choices("opacity", s).labels[mod_choices("opacity", s).index_of(0.99)] == "99%");
+    // Hand-edited values stay selectable, so opening the tab changes nothing.
+    s.scale = 1.25;
+    s.opacity = 0.5;
+    CHECK(mod_choices("scale", s).values.size() == 11);
+    CHECK(mod_choices("scale", s).labels[mod_choices("scale", s).index_of(1.25)] == "1.25x");
+    CHECK(mod_choices("opacity", s).labels[mod_choices("opacity", s).index_of(0.5)] == "50%");
+    CHECK(mod_choices("text_log", s).labels[0] == "On");
+}
+
+// --- the Mod tab in the game's Settings menu ------------------------------------
+
+struct MemStore : ConfigStore {
+    std::string text = "[general]\nenabled = true ; master\nscale = 1.5\nopacity = 0.99\n[features]\ntext_log = true\n";
+    bool readable = true;
+    int writes = 0;
+    bool read(std::string &t) override {
+        if (readable) t = text;
+        return readable;
+    }
+    bool write(const std::string &t) override {
+        text = t;
+        ++writes;
+        return true;
+    }
+};
+
+static Node *make_tab_item(FakeUi &ui, Node *row, const std::string &name) {
+    Node *item = ui.node(name, row);
+    item->comps[Comp::CustomSettingDropdown];
+    item->comps[Comp::Button];
+    Node *title = ui.node("Title", item);
+    title->comps[Comp::Tmp][Prop::TmpFontSize] = 36;
+    title->comps[Comp::LocalizedText];
+    ui.node("Dropdown", item)->comps[Comp::Dropdown];
+    return item;
+}
+
+static Node *make_settings_menu(FakeUi &ui, bool with_workshop = true) {
+    Node *menu = ui.node("Settings Template(Clone)");
+    menu->comps[Comp::SettingsMenu];
+    Node *buttons = ui.path(menu, "Tab/Buttons");
+    ui.path(menu, "Container");
+    std::vector<std::pair<std::string, std::string>> names = {
+        {"Gameplay", "Gameplay"}, {"Graphics", "Graphics"}, {"Audio", "Audio"}, {"Input", "Input"},
+        {"Steam Workshop", "Workshop"}, {"Purchases", "Workshop"}};
+    for (auto &n : names) {
+        if (!with_workshop && n.first == "Steam Workshop") continue;
+        Node *b = ui.node(n.first, buttons);
+        b->comps[Comp::Button];
+        b->comps[Comp::LoadTabOnSelect];
+        b->comps[Comp::SetActiveOnPlatforms];
+        ui.strings[{b, "tabName"}] = n.second;
+        Node *label = ui.node("Text (TMP)", b);
+        label->comps[Comp::Tmp];
+        label->comps[Comp::LocalizedText];
+        label->text = n.second;
+    }
+    Node *gameplay = ui.node("Gameplay");  // the prefab asset
+    gameplay->comps[Comp::SettingsTab];
+    Node *header = ui.node("Tab Header", gameplay);
+    header->comps[Comp::Tmp][Prop::TmpFontSize] = 76;
+    header->comps[Comp::LocalizedText];
+    Node *row = ui.node("Double Dropdown", gameplay);
+    make_tab_item(ui, row, "Text Speed");
+    make_tab_item(ui, row, "Character Emotes");
+    ui.menu_tabs[menu] = {{"Gameplay", gameplay, ui.find(buttons, "Gameplay") ? ui.N(ui.find(buttons, "Gameplay")) : nullptr}};
+    ui.menu_tabs[menu].push_back({"Workshop", ui.node("Workshop"), nullptr});
+    return menu;
+}
+
+TEST(settings_tab_added_after_workshop_once) {
+    FakeUi ui;
+    MemLog log;
+    MemStore store;
+    Runtime rt(settings(), log);
+    rt.set_config_store(&store);
+    Node *menu = make_settings_menu(ui);
+    rt.on_instance(ui, Target::SettingsMenu, menu);
+    CHECK(log.has("FEATURE settings_menu applied"));
+    Node *buttons = ui.N(ui.find(menu, "Tab/Buttons"));
+    Node *mod = ui.N(ui.find(buttons, "LTM Mod"));
+    CHECK(mod != nullptr);
+    if (!mod) return;
+    CHECK(ui.sibling_index(mod) == ui.sibling_index(ui.find(buttons, "Steam Workshop")) + 1);
+    CHECK((ui.strings[{mod, "tabName"}]) == "LTM Mod");
+    CHECK(!mod->comps.count(Comp::SetActiveOnPlatforms));
+    Node *label = ui.N(ui.find(mod, "Text (TMP)"));
+    CHECK(label->text == "Mod");
+    CHECK(!label->comps.count(Comp::LocalizedText));
+    // The Workshop button itself is unchanged.
+    Node *workshop = ui.N(ui.find(buttons, "Steam Workshop"));
+    CHECK((ui.strings[{workshop, "tabName"}]) == "Workshop");
+    CHECK(workshop->comps.count(Comp::SetActiveOnPlatforms));
+    auto tabs = ui.settings_tabs(menu);
+    CHECK(tabs.size() == 3 && tabs.back() == "LTM Mod");
+
+    // The template: header, five rows of two, the note; every setting navigable.
+    Node *tmpl = ui.N(ui.settings_tab_prefab(menu, "LTM Mod"));
+    CHECK(ui.find(tmpl, "Tab Header") && ui.N(ui.find(tmpl, "Tab Header"))->text == "Mod");
+    CHECK(!ui.N(ui.find(tmpl, "Tab Header"))->comps.count(Comp::LocalizedText));
+    CHECK(ui.child_count(tmpl) == 7);
+    CHECK(ui.find(tmpl, "LTM Note") != nullptr);
+    CHECK(ui.tab_options[tmpl].size() == mod_controls().size());
+    CHECK(ui.find(tmpl, "LTM Row 1/LTM enabled") && ui.find(tmpl, "LTM Row 5/LTM pause_when_unfocused"));
+    Node *scale_item = ui.N(ui.find(tmpl, "LTM Row 1/LTM scale"));
+    CHECK(ui.N(ui.find(scale_item, "Title"))->text == "Text Size");
+    CHECK((ui.strings[{scale_item, "settingName"}]) == "LTM scale");
+    // The game's Gameplay prefab is untouched.
+    Node *gameplay = ui.N(ui.settings_tab_prefab(menu, "Gameplay"));
+    CHECK(ui.N(ui.find(gameplay, "Tab Header"))->text == "Text");
+    CHECK(ui.child_count(gameplay) == 2);
+
+    // Announced again (e.g. Awake and Show): nothing is added twice.
+    rt.on_instance(ui, Target::SettingsMenu, menu);
+    CHECK(ui.settings_tabs(menu).size() == 3);
+    int mods = 0;
+    for (int i = 0; i < ui.child_count(buttons); ++i) mods += ui.name(ui.child(buttons, i)) == "LTM Mod";
+    CHECK(mods == 1);
+    // A second menu instance reuses the template.
+    Node *menu2 = make_settings_menu(ui);
+    rt.on_instance(ui, Target::SettingsMenu, menu2);
+    CHECK(ui.settings_tab_prefab(menu2, "LTM Mod") == tmpl);
+}
+
+TEST(settings_tab_shows_and_saves_the_config) {
+    FakeUi ui;
+    MemLog log;
+    MemStore store;
+    store.text = "; mine\n[general]\nenabled = true ; master\nscale = 1.25\nopacity = 0.99\n[features]\ntext_log = false\n";
+    Runtime rt(settings(), log);
+    rt.set_config_store(&store);
+    Node *menu = make_settings_menu(ui);
+    rt.on_instance(ui, Target::SettingsMenu, menu);
+    rt.on_frame(ui);  // another tab shown: nothing happens
+    CHECK(store.writes == 0);
+    Node *tab = ui.load_tab(menu, "LTM Mod", ui.N(ui.find(menu, "Container")));
+    CHECK(tab != nullptr);
+    if (!tab) return;
+    rt.on_frame(ui);
+    Node *scale = ui.N(ui.find(tab, "LTM Row 1/LTM scale/Dropdown"));
+    Node *log_dd = ui.N(ui.find(tab, "LTM Row 4/LTM text_log/Dropdown"));
+    Node *enabled = ui.N(ui.find(tab, "LTM Row 1/LTM enabled/Dropdown"));
+    CHECK(ui.dropdown_options[scale].size() == 11);  // 1.25 kept as a choice
+    CHECK(ui.dropdown_options[scale][static_cast<size_t>(ui.prop(scale, Comp::Dropdown, Prop::DropdownValue))] == "1.25x");
+    CHECK(ui.prop(log_dd, Comp::Dropdown, Prop::DropdownValue) == 1);  // Off
+    CHECK(ui.prop(enabled, Comp::Dropdown, Prop::DropdownValue) == 0);  // On
+    rt.on_frame(ui);
+    CHECK(store.writes == 0);  // showing the tab saves nothing
+
+    ui.prop(enabled, Comp::Dropdown, Prop::DropdownValue) = 1;
+    rt.on_frame(ui);
+    CHECK(store.writes == 1);
+    CHECK(store.text == "; mine\n[general]\nenabled = false ; master\nscale = 1.25\nopacity = 0.99\n[features]\ntext_log = false\n");
+    ui.prop(scale, Comp::Dropdown, Prop::DropdownValue) = 10;  // 2.0x (11 choices)
+    ui.prop(log_dd, Comp::Dropdown, Prop::DropdownValue) = 0;
+    rt.on_frame(ui);
+    CHECK(store.writes == 3);
+    ConfigResult r = parse_config(store.text);
+    CHECK(!r.settings.enabled);
+    CHECK_NEAR(r.settings.scale, 2.0);
+    CHECK(r.settings.feature("text_log"));
+    CHECK(r.warnings.empty());
+
+    // Shown again later: filled from the file as it is now.
+    ui.loaded_tab[menu] = nullptr;
+    ui.current_tab[menu] = "Gameplay";
+    rt.on_frame(ui);
+    store.text = "[general]\nscale = 1.1\nopacity = 0.0\n";
+    Node *again = ui.load_tab(menu, "LTM Mod", ui.N(ui.find(menu, "Container")));
+    rt.on_frame(ui);
+    Node *scale2 = ui.N(ui.find(again, "LTM Row 1/LTM scale/Dropdown"));
+    CHECK(ui.dropdown_options[scale2][static_cast<size_t>(ui.prop(scale2, Comp::Dropdown, Prop::DropdownValue))] == "1.1x");
+    CHECK(store.writes == 3);
+}
+
+TEST(settings_tab_works_with_the_master_switch_off) {
+    FakeUi ui;
+    MemLog log;
+    Settings s = settings();
+    s.enabled = false;
+    Runtime rt(s, log);
+    rt.report_disabled();
+    CHECK(!log.has("FEATURE settings_menu disabled"));
+    Node *menu = make_settings_menu(ui);
+    rt.on_instance(ui, Target::SettingsMenu, menu);
+    CHECK(log.has("FEATURE settings_menu applied"));
+    CHECK(ui.settings_tabs(menu).back() == "LTM Mod");
+}
+
+TEST(settings_tab_skipped_without_workshop_button) {
+    FakeUi ui;
+    MemLog log;
+    Runtime rt(settings(), log);
+    Node *menu = make_settings_menu(ui, false);
+    int children = ui.child_count(ui.find(menu, "Tab/Buttons"));
+    rt.on_instance(ui, Target::SettingsMenu, menu);
+    CHECK(log.has("FEATURE settings_menu skipped"));
+    CHECK(ui.settings_tabs(menu).size() == 2);
+    CHECK(ui.child_count(ui.find(menu, "Tab/Buttons")) == children);
+}
+
+TEST(settings_tab_rolls_back_on_failure) {
+    FakeUi ui;
+    MemLog log;
+    Runtime rt(settings(), log);
+    Node *menu = make_settings_menu(ui);
+    Node *buttons = ui.N(ui.find(menu, "Tab/Buttons"));
+    int children = ui.child_count(buttons);
+    ui.fail_add_tab = true;
+    rt.on_instance(ui, Target::SettingsMenu, menu);
+    CHECK(log.has("FEATURE settings_menu failed: injected failure"));
+    CHECK(ui.child_count(buttons) == children);
+    CHECK(ui.find(buttons, "LTM Mod") == nullptr);
+    CHECK(ui.child_count(ui.holder()) == 0);
+    CHECK(ui.settings_tabs(menu).size() == 2);
 }
 
 int main() {

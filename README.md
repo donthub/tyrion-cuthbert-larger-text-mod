@@ -9,6 +9,7 @@ Makes the game's text easier to read on small screens such as the Steam Deck:
 - **Evidence menu (Clues, Spells, People):** larger description. The picture is on the right, with the same padding on its left and below it as between it and the panel edge. The details and View button stay beside it under the item name. When there are details, the description starts below the picture at full width; otherwise it starts below the name and wraps around the picture: lines beside it are narrower, and the text runs on at full width below it, without a gap.
 - **"Obtained / updated evidence" popup:** wider and larger, with the same picture-and-description layout: details beside the picture, and the description below the picture or, without details, wrapping around it.
 - **Pause when unfocused:** the game no longer reacts to input while another window has focus.
+- **In-game settings:** a *Mod* tab in the game's Settings menu, after *Workshop*, to change the mod's settings.
 
 Text that would not fit its box at the larger size (a very long line, name or description) is scaled down just enough to fit, but never below the game's own size.
 
@@ -47,7 +48,15 @@ If the original asset-patching version of this mod (v1.x) is installed, Install 
 
 ## Configuration
 
-Install writes `TyrionCuthbertLargerTextMod/config.ini`. Edit it with any text editor; changes take effect at the next game start. Re-running Install changes only `scale` and `opacity` and keeps everything else.
+### In the game
+
+Open *Settings* (from the title screen or the pause menu) and select **Mod**, below *Workshop*. Every setting below has a dropdown there: the master switch (*Mod*), *Text Size*, *Box Opacity* and one On/Off switch per feature. A change is saved to `config.ini` immediately and **takes effect the next time the game starts**.
+
+The tab is there even when the master switch is off, so you can switch the mod back on in the game. It doesn't change the game's own settings.
+
+### In config.ini
+
+Install writes `TyrionCuthbertLargerTextMod/config.ini`. Edit it with any text editor (with the game closed, or the in-game tab may save over your edit); changes take effect at the next game start. Re-running Install changes only `scale` and `opacity` and keeps everything else. The in-game tab changes only the line of the setting you changed and keeps your comments and any other lines.
 
 ```ini
 [general]
@@ -115,8 +124,9 @@ The runtime writes `TyrionCuthbertLargerTextMod/runtime.log` at every game start
 | --- | --- |
 | No `runtime.log` after starting the game | The loader was not loaded. On Steam Deck/Linux, check the launch option. On Windows, check that `version.dll` is in the game folder (Status). |
 | A feature is `skipped` | A game update changed that menu. The rest keeps working; check for a mod update. |
-| Text too large, or long text shrunk too often | Re-run Install with a smaller scale, e.g. `Install 1.3`. |
-| Want the original look back temporarily | Set `enabled = false` in `config.ini`. |
+| Text too large, or long text shrunk too often | Choose a smaller *Text Size* in *Settings* → *Mod* and restart the game, or re-run Install with a smaller scale, e.g. `Install 1.3`. |
+| Want the original look back temporarily | Set the *Mod* option to *Off* in *Settings* → *Mod* (or `enabled = false` in `config.ini`) and restart the game. |
+| No *Mod* tab in the Settings menu | Look for `FEATURE settings_menu` in the log: a game update may have changed the menu. Edit `config.ini` instead. |
 
 ## Known limitations
 

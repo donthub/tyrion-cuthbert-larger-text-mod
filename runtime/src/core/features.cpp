@@ -6,6 +6,8 @@
 #include <functional>
 #include <map>
 
+#include "mod_settings.h"
+
 namespace ltm {
 
 using layout::TmpSize;
@@ -1078,6 +1080,203 @@ class NotificationUnit : public Unit {
 
 }  // namespace
 
+
+// ---------------------------------------------------------------------------
+// The mod's tab in the game's Settings menu (FR-UI-41 ... FR-UI-46)
+//
+// A button "Mod" is added after the Workshop button, and a tab built from the
+// Gameplay tab (rows of two dropdowns) is registered with the menu, so the game
+// loads and navigates it like its own tabs. The game's dropdown script on each
+// item is kept for navigation and opening the list; its loading and saving are
+// skipped by the engine for objects named "LTM ..." (they would store values
+// in the game's own settings). The unit fills and polls the dropdowns itself
+// and saves changes to config.ini.
+
+namespace {
+
+const char *const kModTab = "LTM Mod";        // tab name (internal) and button object name
+const char *const kModLabel = "Mod";          // button and header text
+const char *const kModTemplate = "LTM Mod Tab";
+const char *const kWorkshopButton = "Steam Workshop";
+const char *const kWorkshopTab = "Workshop";
+const char *const kGameplayTab = "Gameplay";
+const char *const kRow = "Double Dropdown";
+
+class SettingsTabUnit : public Unit {
+  public:
+    SettingsTabUnit() : Unit("settings_menu", "settings_menu", Target::SettingsMenu) {}
+
+    bool always_on() const override { return true; }
+    bool matches(Ui &ui, Handle root) override { return ui.has(root, Comp::SettingsMenu); }
+
+    void validate(Ui &ui, Handle root) override {
+        Handle buttons = need(ui, root, "Tab/Buttons");
+        if (ui.find(buttons, kModTab)) throw AlreadyApplied{};
+        std::vector<std::string> tabs = ui.settings_tabs(root);
+        if (std::find(tabs.begin(), tabs.end(), kModTab) != tabs.end()) throw AlreadyApplied{};
+        Handle workshop = need(ui, buttons, kWorkshopButton, {Comp::Button, Comp::LoadTabOnSelect});
+        expect(ui.get_string(workshop, Comp::LoadTabOnSelect, "tabName") == kWorkshopTab,
+               "the Workshop button doesn't open the Workshop tab");
+        need(ui, workshop, "Text (TMP)", {Comp::Tmp});
+        expect(std::find(tabs.begin(), tabs.end(), kGameplayTab) != tabs.end(), "no Gameplay tab");
+        Handle prefab = ui.settings_tab_prefab(root, kGameplayTab);
+        expect(prefab != nullptr, "the Gameplay tab has no prefab");
+        need(ui, prefab, "Tab Header", {Comp::Tmp});
+        Handle row = need(ui, prefab, kRow);
+        expect(ui.child_count(row) == 2, "a Gameplay row doesn't hold two settings");
+        for (int i = 0; i < 2; ++i) {
+            Handle item = ui.child(row, i);
+            expect(ui.has(item, Comp::CustomSettingDropdown), "a Gameplay setting is not a dropdown");
+            need(ui, item, "Title", {Comp::Tmp});
+            need(ui, item, "Dropdown", {Comp::Dropdown});
+        }
+    }
+
+    void apply(Tx &tx, Handle root, const Context &ctx) override {
+        (void)ctx;
+        Ui &ui = tx.ui();
+        Handle prefab = tab_template(tx, root);
+        Handle buttons = need(ui, root, "Tab/Buttons");
+        Handle workshop = need(ui, buttons, kWorkshopButton);
+        // Prepared below the inactive holder, so the copy's scripts first run
+        // (Awake) when it is moved into the menu, after the changes.
+        Handle button = tx.clone(workshop, ui.holder(), kModTab);
+        if (ui.has(button, Comp::SetActiveOnPlatforms)) ui.remove(button, Comp::SetActiveOnPlatforms);
+        Handle label = need(ui, button, "Text (TMP)");
+        if (ui.has(label, Comp::LocalizedText)) ui.remove(label, Comp::LocalizedText);
+        ui.set_text(label, kModLabel);
+        tx.set_string(button, Comp::LoadTabOnSelect, "tabName", kModTab);
+        tx.set_parent(button, buttons, ui.sibling_index(workshop) + 1);
+        tx.add_settings_tab(root, kModTab, prefab, button);
+    }
+
+    bool wants_tick() const override { return true; }
+
+    void tick(Ui &ui, Handle root, const Context &ctx) override {
+        Handle tab = ui.current_settings_tab(root) == kModTab ? ui.loaded_settings_tab(root) : nullptr;
+        if (!tab || !ui.alive(tab)) {
+            bound_ = 0;
+            return;
+        }
+        int id = ui.instance_id(tab);
+        if (id != bound_) {
+            bind(ui, tab, ctx);
+            bound_ = id;
+            return;
+        }
+        for (Control &c : controls_) {
+            int index = static_cast<int>(std::lround(ui.get(c.dropdown, Comp::Dropdown, Prop::DropdownValue)));
+            if (index == c.index || index < 0 || index >= static_cast<int>(c.choices.values.size())) continue;
+            c.index = index;
+            save(c.key, c.choices.values[static_cast<size_t>(index)], ctx);
+        }
+    }
+
+  private:
+    struct Control {
+        std::string key;
+        Handle dropdown = nullptr;  // only valid while bound_
+        Choices choices;
+        int index = -1;
+    };
+
+    // The tab prefab: built once per session from the Gameplay tab and kept
+    // below the holder (the game instantiates it like its own prefabs).
+    Handle tab_template(Tx &tx, Handle menu) {
+        Ui &ui = tx.ui();
+        if (template_ && ui.alive(template_)) return template_;
+        if (template_) ui.release(template_);
+        template_ = nullptr;
+        Handle t = tx.clone(ui.settings_tab_prefab(menu, kGameplayTab), ui.holder(), kModTemplate);
+        Handle header = need(ui, t, "Tab Header");
+        if (ui.has(header, Comp::LocalizedText)) ui.remove(header, Comp::LocalizedText);
+        ui.set_text(header, kModLabel);
+
+        // Rows: keep the first "Double Dropdown" as the pattern, drop anything else.
+        Handle pattern = need(ui, t, kRow);
+        for (int i = ui.child_count(t) - 1; i >= 0; --i) {
+            Handle c = ui.child(t, i);
+            int id = ui.instance_id(c);
+            if (id != ui.instance_id(header) && id != ui.instance_id(pattern)) ui.destroy(c);
+        }
+        const auto &controls = mod_controls();
+        size_t rows = (controls.size() + 1) / 2;
+        std::vector<Handle> options;
+        Settings defaults;
+        for (size_t r = 0; r < rows; ++r) {
+            Handle row = r == 0 ? pattern : ui.clone(pattern, t, "LTM Row");
+            ui.set_parent(row, t, -1);
+            for (int i = 1; i >= 0; --i) {
+                Handle item = ui.child(row, i);
+                size_t n = r * 2 + static_cast<size_t>(i);
+                if (n >= controls.size()) {
+                    ui.destroy(item);
+                    continue;
+                }
+                const ModControl &c = controls[n];
+                ui.set_name(item, std::string("LTM ") + c.key);
+                Handle title = need(ui, item, "Title");
+                if (ui.has(title, Comp::LocalizedText)) ui.remove(title, Comp::LocalizedText);
+                ui.set_text(title, c.label);
+                Choices choices = mod_choices(c.key, defaults);
+                ui.set_string(item, Comp::CustomSettingDropdown, "settingName", std::string("LTM ") + c.key);
+                ui.set_strings(item, Comp::CustomSettingDropdown, "options", choices.labels);
+                ui.set_dropdown_options(need(ui, item, "Dropdown"), choices.labels);
+            }
+            ui.set_name(row, "LTM Row " + std::to_string(r + 1));
+            for (int i = 0; i < ui.child_count(row); ++i) options.push_back(ui.child(row, i));
+        }
+        // The note: a smaller copy of the header, below the rows.
+        Handle note = ui.clone(header, t, "LTM Note");
+        ui.set_parent(note, t, -1);
+        ui.set_text(note, kModTabNote);
+        double size = ui.get(header, Comp::Tmp, Prop::TmpFontSize);
+        ui.set(note, Comp::Tmp, Prop::TmpAutoSize, 0);
+        ui.set(note, Comp::Tmp, Prop::TmpFontSize, std::max(20.0, size * 0.4));
+        ui.set_settings_options(t, options);
+        ui.retain(t);
+        template_ = t;
+        return t;
+    }
+
+    // Fills a newly shown tab from config.ini as it is now on disk.
+    void bind(Ui &ui, Handle tab, const Context &ctx) {
+        Settings saved = ctx.settings;
+        std::string text;
+        if (ctx.shared.config && ctx.shared.config->read(text)) saved = parse_config(text).settings;
+        controls_.clear();
+        for (const ModControl &mc : mod_controls()) {
+            Handle item = nullptr;
+            for (int r = 0; r < ui.child_count(tab) && !item; ++r) item = ui.find(ui.child(tab, r), std::string("LTM ") + mc.key);
+            if (!item) throw Mismatch(std::string("the Mod tab has no ") + mc.key + " setting");
+            Control c;
+            c.key = mc.key;
+            c.dropdown = need(ui, item, "Dropdown", {Comp::Dropdown});
+            c.choices = mod_choices(mc.key, saved);
+            c.index = c.choices.index_of(mod_value(mc.key, saved));
+            ui.set_dropdown_options(c.dropdown, c.choices.labels);
+            ui.set(c.dropdown, Comp::Dropdown, Prop::DropdownValue, c.index);
+            controls_.push_back(std::move(c));
+        }
+    }
+
+    void save(const std::string &key, double value, const Context &ctx) {
+        ConfigStore *store = ctx.shared.config;
+        if (!store) return;
+        std::string text;
+        if (!store->read(text)) return;
+        Settings s = parse_config(text).settings;
+        set_mod_value(key, value, s);
+        store->write(update_config(text, {config_update(s, key)}));
+    }
+
+    Handle template_ = nullptr;
+    int bound_ = 0;
+    std::vector<Control> controls_;
+};
+
+}  // namespace
+
 std::vector<std::unique_ptr<Unit>> make_units() {
     std::vector<std::unique_ptr<Unit>> units;
     units.push_back(std::make_unique<DialogueBoxUnit>("dialogue_box", "dialogue_box", BoxKind::Dialogue));
@@ -1092,6 +1291,7 @@ std::vector<std::unique_ptr<Unit>> make_units() {
     units.push_back(std::make_unique<TextLogUnit>());
     units.push_back(std::make_unique<EvidenceMenuUnit>());
     units.push_back(std::make_unique<NotificationUnit>());
+    units.push_back(std::make_unique<SettingsTabUnit>());
     return units;
 }
 

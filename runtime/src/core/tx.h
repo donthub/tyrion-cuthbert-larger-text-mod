@@ -3,6 +3,7 @@
 // changes (FR-RT-6, FR-RT-7).
 #pragma once
 #include <functional>
+#include <string>
 #include <vector>
 
 #include "ui.h"
@@ -25,6 +26,8 @@ class Tx {
     Handle create(const std::string &name, Handle parent);
     Handle clone(Handle original, Handle parent, const std::string &name);
     void set_linked_text(Handle go, Handle target);
+    void set_string(Handle go, Comp c, const std::string &field, const std::string &value);
+    void add_settings_tab(Handle menu, const std::string &tab, Handle prefab, Handle button);
 
     void commit() { undo_.clear(); committed_ = true; }
     // Undoes everything recorded so far, newest first. Errors during rollback

@@ -86,6 +86,7 @@ class FakeUi : public Ui {
         }
     }
     std::string name(Handle go) override { return N(go)->name; }
+    void set_name(Handle go, const std::string &n) override { N(go)->name = n; }
     Handle parent(Handle go) override { return N(go)->parent; }
     int sibling_index(Handle go) override {
         Node *n = N(go);
@@ -165,11 +166,25 @@ class FakeUi : public Ui {
 
     Handle create(const std::string &name, Handle parent) override { return node(name, N(parent)); }
     Handle clone(Handle original, Handle parent, const std::string &name) override {
-        Node *src = N(original);
-        Node *n = node(name, N(parent));
+        Node *n = copy(N(original), N(parent));
+        n->name = name;
+        return n;
+    }
+    // Deep copy, like Object.Instantiate.
+    Node *copy(Node *src, Node *parent) {
+        Node *n = node(src->name, parent);
         n->rect = src->rect;
         n->comps = src->comps;
         n->active = src->active;
+        n->text = src->text;
+        n->text_lines = src->text_lines;
+        for (auto &e : std::map<std::pair<Node *, std::string>, std::string>(strings))
+            if (e.first.first == src) strings[{n, e.first.second}] = e.second;
+        for (auto &e : std::map<std::pair<Node *, std::string>, std::vector<std::string>>(string_lists))
+            if (e.first.first == src) string_lists[{n, e.first.second}] = e.second;
+        if (dropdown_options.count(src)) dropdown_options[n] = dropdown_options[src];
+        for (Node *c : std::vector<Node *>(src->children))
+            if (!c->destroyed) copy(c, n);
         return n;
     }
     void destroy(Handle go) override {
@@ -202,10 +217,94 @@ class FakeUi : public Ui {
         throw Mismatch("no enum value " + member);
     }
 
+    void set_text(Handle go, const std::string &t) override { N(go)->text = t; }
+    void set_dropdown_options(Handle go, const std::vector<std::string> &labels) override {
+        if (!N(go)->comps.count(Comp::Dropdown)) throw EngineError("no dropdown");
+        dropdown_options[N(go)] = labels;
+    }
+    std::string get_string(Handle go, Comp c, const std::string &field) override {
+        if (!N(go)->comps.count(c)) throw Mismatch("no component");
+        auto it = strings.find({N(go), field});
+        return it == strings.end() ? "" : it->second;
+    }
+    void set_string(Handle go, Comp c, const std::string &field, const std::string &v) override {
+        if (!N(go)->comps.count(c)) throw Mismatch("no component");
+        strings[{N(go), field}] = v;
+    }
+    void set_strings(Handle go, Comp c, const std::string &field, const std::vector<std::string> &v) override {
+        if (!N(go)->comps.count(c)) throw Mismatch("no component");
+        string_lists[{N(go), field}] = v;
+    }
+    Handle holder() override {
+        if (!holder_) {
+            holder_ = node("LTM Holder");
+            holder_->active = false;
+        }
+        return holder_;
+    }
+
+    // Settings menu stand-in.
+    struct Tab {
+        std::string name;
+        Node *prefab, *button;
+    };
+    std::map<Node *, std::vector<Tab>> menu_tabs;
+    std::map<Node *, std::string> current_tab;
+    std::map<Node *, Node *> loaded_tab;
+    std::map<Node *, std::vector<Node *>> tab_options;
+    std::vector<std::string> settings_tabs(Handle menu) override {
+        std::vector<std::string> names;
+        for (auto &t : menu_tabs[N(menu)]) names.push_back(t.name);
+        return names;
+    }
+    Handle settings_tab_prefab(Handle menu, const std::string &tab) override {
+        for (auto &t : menu_tabs[N(menu)])
+            if (t.name == tab) return t.prefab;
+        return nullptr;
+    }
+    void add_settings_tab(Handle menu, const std::string &tab, Handle prefab, Handle button) override {
+        if (fail_add_tab) throw EngineError("injected failure");
+        menu_tabs[N(menu)].push_back({tab, N(prefab), N(button)});
+    }
+    void remove_settings_tab(Handle menu, const std::string &tab) override {
+        auto &v = menu_tabs[N(menu)];
+        for (size_t i = 0; i < v.size(); ++i)
+            if (v[i].name == tab) {
+                v.erase(v.begin() + static_cast<long>(i));
+                return;
+            }
+    }
+    std::string current_settings_tab(Handle menu) override { return current_tab[N(menu)]; }
+    Handle loaded_settings_tab(Handle menu) override { return loaded_tab[N(menu)]; }
+    void set_settings_options(Handle tab, const std::vector<Handle> &options) override {
+        auto &v = tab_options[N(tab)];
+        v.clear();
+        for (Handle h : options) v.push_back(N(h));
+    }
+    // What the game does when a tab button is selected.
+    Node *load_tab(Node *menu, const std::string &name, Node *container) {
+        for (auto &t : menu_tabs[menu])
+            if (t.name == name) {
+                Node *n = copy(t.prefab, container);
+                n->name = t.prefab->name + "(Clone)";
+                n->active = true;
+                current_tab[menu] = name;
+                loaded_tab[menu] = n;
+                return n;
+            }
+        return nullptr;
+    }
+    bool fail_add_tab = false;
+
+    std::map<std::pair<Node *, std::string>, std::string> strings;
+    std::map<std::pair<Node *, std::string>, std::vector<std::string>> string_lists;
+    std::map<Node *, std::vector<std::string>> dropdown_options;
+
     std::set<Node *> overflowing;
     std::map<Node *, Bounds> bounds;
 
   private:
+    Node *holder_ = nullptr;
     std::vector<std::unique_ptr<Node>> nodes_;
     int next_id_ = 0;
 };

@@ -302,6 +302,7 @@ def default_config_text(scale=SCALE_DEFAULT, opacity=OPACITY_DEFAULT):
     lines = [
         "; Tyrion Cuthbert Larger Text Mod - settings",
         "; Read at every game start: changes take effect the next time you start the game.",
+        "; You can also change these in the game: Settings > Mod (it saves to this file).",
         "; Lines starting with ; or # are comments. Booleans: true/false, yes/no, on/off, 1/0.",
         "; Missing or invalid values fall back to their defaults (a warning goes to runtime.log).",
         "; Install keeps this file when it runs again and only changes scale/opacity when given.",

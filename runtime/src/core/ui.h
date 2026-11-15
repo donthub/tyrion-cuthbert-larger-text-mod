@@ -7,6 +7,7 @@
 #pragma once
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace ltm {
 
@@ -45,6 +46,14 @@ enum class Comp {
     ItemMenu,
     AddItemDisplay,
     ImageDisplay,
+    // The game's Settings menu (namespace UIBase) and TMP dropdowns.
+    SettingsMenu,
+    SettingsTab,
+    LoadTabOnSelect,
+    LocalizedText,
+    SetActiveOnPlatforms,
+    CustomSettingDropdown,
+    Dropdown,        // TMPro.TMP_Dropdown
     Count
 };
 
@@ -97,6 +106,9 @@ enum class Prop {
     FitVertical,
     // AspectRatioFitter (2 = height controls width)
     AspectMode,
+    // TMP_Dropdown
+    DropdownValue,     // selected index; writing it doesn't fire the change event
+    DropdownExpanded,  // read-only: the option list is open
     Count
 };
 
@@ -125,6 +137,7 @@ class Ui {
     // Hierarchy. `path` is relative to `root`, with '/' separators; "" is root.
     virtual Handle find(Handle root, const std::string &path) = 0;
     virtual std::string name(Handle go) = 0;
+    virtual void set_name(Handle go, const std::string &name) = 0;
     virtual Handle parent(Handle go) = 0;
     virtual int sibling_index(Handle go) = 0;
     virtual int child_count(Handle go) = 0;
@@ -175,6 +188,30 @@ class Ui {
     // The value of a member of an enum-typed property's enum, e.g. a
     // SuperTextMesh.BestFitMode value by name. Throws Mismatch when absent.
     virtual int enum_value(Handle go, Comp c, Prop p, const std::string &member) = 0;
+    // Sets a TMP text (UTF-8).
+    virtual void set_text(Handle go, const std::string &text) = 0;
+    // Replaces the options of the TMP_Dropdown on `go`.
+    virtual void set_dropdown_options(Handle go, const std::vector<std::string> &labels) = 0;
+    // String and string[] fields of a component, by field name.
+    virtual std::string get_string(Handle go, Comp c, const std::string &field) = 0;
+    virtual void set_string(Handle go, Comp c, const std::string &field, const std::string &value) = 0;
+    virtual void set_strings(Handle go, Comp c, const std::string &field, const std::vector<std::string> &values) = 0;
+    // An inactive object that survives scene loads. Objects below it don't run
+    // their scripts (no Awake), so it can hold templates. Always the same one.
+    virtual Handle holder() = 0;
+
+    // The game's Settings menu (UIBase.SettingsMenu on `menu`). Its tabs are a
+    // list of {name, tab prefab, button}; the game instantiates a tab's prefab
+    // when its button is selected.
+    virtual std::vector<std::string> settings_tabs(Handle menu) = 0;
+    virtual Handle settings_tab_prefab(Handle menu, const std::string &tab) = 0;  // nullptr when missing
+    virtual void add_settings_tab(Handle menu, const std::string &tab, Handle prefab, Handle button) = 0;
+    virtual void remove_settings_tab(Handle menu, const std::string &tab) = 0;
+    virtual std::string current_settings_tab(Handle menu) = 0;
+    virtual Handle loaded_settings_tab(Handle menu) = 0;  // the shown tab instance, nullptr when none
+    // The options a tab navigates (SettingsTab.allSettings, firstSelect = the first).
+    // Each object carries a settings option (CustomSettingDropdown).
+    virtual void set_settings_options(Handle tab, const std::vector<Handle> &options) = 0;
 };
 
 }  // namespace ltm

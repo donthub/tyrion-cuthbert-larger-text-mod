@@ -8,7 +8,9 @@ const char *comp_name(Comp c) {
     static const char *const names[] = {"TMP_Text", "SuperTextMesh", "RawImage", "Graphic",
                                         "HorizontalLayoutGroup", "VerticalLayoutGroup", "LayoutElement",
                                         "ContentSizeFitter", "AspectRatioFitter", "Button", "DialogueBox",
-                                        "TestimonyPrompt", "TextLogGUI", "ItemMenu", "AddItemDisplay", "ImageDisplay"};
+                                        "TestimonyPrompt", "TextLogGUI", "ItemMenu", "AddItemDisplay", "ImageDisplay",
+                                        "SettingsMenu", "SettingsTab", "LoadTabOnSelect", "LocalizedText",
+                                        "SetActiveOnPlatforms", "CustomSettingDropdown", "TMP_Dropdown"};
     static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(Comp::Count), "component names");
     return names[static_cast<size_t>(c)];
 }
@@ -21,7 +23,7 @@ const char *prop_name(Prop p) {
         "verticalLimitMode", "color.a", "spacing", "childAlignment", "childControlWidth",
         "childControlHeight", "childForceExpandWidth", "childForceExpandHeight", "ignoreLayout", "minWidth",
         "minHeight", "preferredWidth", "preferredHeight", "flexibleWidth", "flexibleHeight", "horizontalFit",
-        "verticalFit", "aspectMode"};
+        "verticalFit", "aspectMode", "value", "IsExpanded"};
     static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(Prop::Count), "property names");
     return names[static_cast<size_t>(p)];
 }
@@ -41,6 +43,7 @@ Runtime::Runtime(const Settings &settings, Log &log, std::vector<std::unique_ptr
     focus.key = focus.config_key = "pause_when_unfocused";
     slots_.push_back(std::move(focus));
     for (Slot &slot : slots_) {
+        if (slot.unit && slot.unit->always_on()) continue;
         if (!settings_.enabled || !settings_.feature(slot.config_key)) slot.state = UnitState::Disabled;
     }
 }

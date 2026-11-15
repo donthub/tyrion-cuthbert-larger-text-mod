@@ -49,6 +49,18 @@ void Tx::set_linked_text(Handle go, Handle target) {
     undo_.push_back([this, go, old] { ui_.set_linked_text(go, old); });
 }
 
+void Tx::set_string(Handle go, Comp c, const std::string &field, const std::string &value) {
+    std::string old = ui_.get_string(go, c, field);
+    if (old == value) return;
+    ui_.set_string(go, c, field, value);
+    undo_.push_back([this, go, c, field, old] { ui_.set_string(go, c, field, old); });
+}
+
+void Tx::add_settings_tab(Handle menu, const std::string &tab, Handle prefab, Handle button) {
+    ui_.add_settings_tab(menu, tab, prefab, button);
+    undo_.push_back([this, menu, tab] { ui_.remove_settings_tab(menu, tab); });
+}
+
 int Tx::rollback() {
     int failures = 0;
     while (!undo_.empty()) {
