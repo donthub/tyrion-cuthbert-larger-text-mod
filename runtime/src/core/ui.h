@@ -18,6 +18,11 @@ struct RectData {
     Vec2 anchorMin, anchorMax, anchoredPosition, sizeDelta, pivot;
 };
 
+// An axis-aligned box in some object's local space.
+struct Bounds {
+    float x_min = 0, y_min = 0, x_max = 0, y_max = 0;
+};
+
 // An opaque GameObject reference. nullptr means "none".
 using Handle = void *;
 
@@ -148,6 +153,8 @@ class Ui {
     virtual void set_rect(Handle go, const RectData &r) = 0;
     virtual Vec2 rect_size(Handle go) = 0;  // the computed rect width/height
     virtual Vec2 local_scale(Handle go) = 0;
+    // The corners of `go`'s rect as laid out, in `ref`'s local space.
+    virtual Bounds bounds_in(Handle go, Handle ref) = 0;
 
     // Objects.
     virtual Handle create(const std::string &name, Handle parent) = 0;  // empty UI object
@@ -160,6 +167,8 @@ class Ui {
     virtual void update_text(Handle go, Comp c) = 0;    // TMP ForceMeshUpdate / STM Rebuild
     // Changes whenever the game assigns new text (TMP or SuperTextMesh).
     virtual const void *text_identity(Handle go, Comp c) = 0;
+    // The text as the game assigned it (TMP), UTF-8, including rich-text tags.
+    virtual std::string text(Handle go, Comp c) = 0;
     // SuperTextMesh: redraws the text as revealed up to `read_time`, without
     // starting, stopping or firing any reading events.
     virtual void show_text_until(Handle go, double read_time) = 0;

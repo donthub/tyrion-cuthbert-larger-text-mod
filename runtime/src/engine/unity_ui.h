@@ -50,6 +50,7 @@ class UnityUi : public Ui {
     void set_rect(Handle go, const RectData &r) override;
     Vec2 rect_size(Handle go) override;
     Vec2 local_scale(Handle go) override;
+    Bounds bounds_in(Handle go, Handle ref) override;
 
     Handle create(const std::string &name, Handle parent) override;
     Handle clone(Handle original, Handle parent, const std::string &name) override;
@@ -59,6 +60,7 @@ class UnityUi : public Ui {
     void set_linked_text(Handle go, Handle target) override;
     void update_text(Handle go, Comp c) override;
     const void *text_identity(Handle go, Comp c) override;
+    std::string text(Handle go, Comp c) override;
     void show_text_until(Handle go, double read_time) override;
     int enum_value(Handle go, Comp c, Prop p, const std::string &member) override;
 

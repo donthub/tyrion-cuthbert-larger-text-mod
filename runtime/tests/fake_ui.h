@@ -24,6 +24,7 @@ struct Node {
     int text_version = 0;
     // Rendered text height per font-size unit (0: a fixed 40), to test fitting.
     double text_lines = 0;
+    std::string text = "Text";  // what the game assigned
 };
 
 class FakeUi : public Ui {
@@ -153,6 +154,14 @@ class FakeUi : public Ui {
                 (r.anchorMax.y - r.anchorMin.y) * 500 + r.sizeDelta.y};
     }
     Vec2 local_scale(Handle go) override { return N(go)->scale; }
+    // Tests place nodes in one shared space via `bounds`; others sit at the
+    // origin with their rect size. `ref` is ignored: only differences matter.
+    Bounds bounds_in(Handle go, Handle) override {
+        auto it = bounds.find(N(go));
+        if (it != bounds.end()) return it->second;
+        Vec2 s = rect_size(go);
+        return {0, 0, s.x, s.y};
+    }
 
     Handle create(const std::string &name, Handle parent) override { return node(name, N(parent)); }
     Handle clone(Handle original, Handle parent, const std::string &name) override {
@@ -179,6 +188,7 @@ class FakeUi : public Ui {
     void set_linked_text(Handle go, Handle t) override { N(go)->linked = N(t); }
     void update_text(Handle go, Comp) override { ++N(go)->text_version; }
     const void *text_identity(Handle go, Comp) override { return reinterpret_cast<const void *>(N(go)->comps.size() + N(go)->text_version * 1000); }
+    std::string text(Handle go, Comp) override { return N(go)->text; }
     void show_text_until(Handle go, double t) override { shown_until[N(go)] = t; }
     std::map<Node *, double> shown_until;
     int enum_value(Handle go, Comp c, Prop p, const std::string &member) override {
@@ -193,6 +203,7 @@ class FakeUi : public Ui {
     }
 
     std::set<Node *> overflowing;
+    std::map<Node *, Bounds> bounds;
 
   private:
     std::vector<std::unique_ptr<Node>> nodes_;

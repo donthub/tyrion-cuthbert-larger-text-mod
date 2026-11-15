@@ -1,5 +1,6 @@
 #include "unity_ui.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace ltm::engine {
@@ -390,6 +391,29 @@ Vec2 UnityUi::local_scale(Handle go) {
     return {v.x, v.y};
 }
 
+Bounds UnityUi::bounds_in(Handle go, Handle ref) {
+    // Each corner of the local rect goes through world space into `ref`'s
+    // local space (no Vector3[] needed, unlike GetWorldCorners).
+    Object *t = transform(go);
+    Object *rt = transform(ref);
+    Rect r = unbox<Rect>(invoke(method(k_.RectTransform, "get_rect", 0), rect_transform(go)));
+    const MethodInfo *to_world = method(k_.Transform, "TransformPoint", 1, {"UnityEngine.Vector3"});
+    const MethodInfo *to_ref = method(k_.Transform, "InverseTransformPoint", 1, {"UnityEngine.Vector3"});
+    Bounds b{1e30f, 1e30f, -1e30f, -1e30f};
+    for (float x : {r.x, r.x + r.width}) {
+        for (float y : {r.y, r.y + r.height}) {
+            Vector3 local{x, y, 0};
+            Vector3 world = unbox<Vector3>(invoke(to_world, t, {&local}));
+            Vector3 p = unbox<Vector3>(invoke(to_ref, rt, {&world}));
+            b.x_min = std::min(b.x_min, p.x);
+            b.y_min = std::min(b.y_min, p.y);
+            b.x_max = std::max(b.x_max, p.x);
+            b.y_max = std::max(b.y_max, p.y);
+        }
+    }
+    return b;
+}
+
 // --- objects ----------------------------------------------------------------------
 
 Handle UnityUi::create(const std::string &object_name, Handle parent_go) {
@@ -452,6 +476,12 @@ const void *UnityUi::text_identity(Handle go, Comp c) {
         return text;
     }
     return invoke(method(il2cpp_object_get_class(comp), "get_text", 0), comp);
+}
+
+std::string UnityUi::text(Handle go, Comp c) {
+    if (c != Comp::Tmp) throw EngineError("text() supports TMP only");
+    Object *comp = component(go, c);
+    return to_utf8(reinterpret_cast<String *>(invoke(method(il2cpp_object_get_class(comp), "get_text", 0), comp)));
 }
 
 void UnityUi::show_text_until(Handle go, double read_time) {

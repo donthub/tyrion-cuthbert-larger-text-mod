@@ -1,6 +1,7 @@
 #include "features.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <functional>
 #include <map>
@@ -513,24 +514,44 @@ float sync_continuation(Ui &ui, Handle head, Handle continuation) {
     return h;
 }
 
-// Detail rows take their text's preferred height, or none when empty.
-// Returns the total height of the rows.
+// Whether a TMP text shows anything: not empty, blank or only rich-text tags.
+bool has_visible_text(const std::string &s) {
+    bool in_tag = false;
+    for (unsigned char ch : s) {
+        if (in_tag) {
+            if (ch == '>') in_tag = false;
+        } else if (ch == '<') {
+            in_tag = true;
+        } else if (!std::isspace(ch) && ch != 0xC2 && ch != 0xA0) {  // also no-break space
+            return true;
+        }
+    }
+    return false;
+}
+
+// Detail rows take their text's preferred height, or none when empty: hidden
+// (also when the whole details area is hidden) or without visible text.
+// Returns the total height of the rows; 0 means there are no detail rows.
 float sync_rows(Ui &ui, Handle fields, const char *names, const char *values, float spacing) {
     float total = 0;
     int shown = 0;
+    bool visible = ui.active_in_hierarchy(fields);
     for (int i = 0, n = ui.child_count(fields); i < n; ++i) {
         Handle row = ui.child(fields, i);
         if (!ui.active_self(row)) continue;
         Handle a = ui.find(row, names);
         Handle b = ui.find(row, values);
         if (!a || !b) continue;
-        float h = std::ceil(std::max(sane_height(ui.get(a, Comp::Tmp, Prop::TmpPreferredHeight)),
-                                     sane_height(ui.get(b, Comp::Tmp, Prop::TmpPreferredHeight))));
+        bool present = visible && (has_visible_text(ui.text(a, Comp::Tmp)) || has_visible_text(ui.text(b, Comp::Tmp)));
+        float h = !present ? 0.0f
+                           : std::ceil(std::max(sane_height(ui.get(a, Comp::Tmp, Prop::TmpPreferredHeight)),
+                                                sane_height(ui.get(b, Comp::Tmp, Prop::TmpPreferredHeight))));
         RectData r = ui.rect(row);
         if (!near(r.sizeDelta.y, h, 0.5f)) {
             r.sizeDelta.y = h;
             ui.set_rect(row, r);
         }
+        if (h <= 0.0f) continue;
         total += h;
         ++shown;
     }
@@ -592,19 +613,39 @@ void setup_probe(Tx &tx, Handle probe) {
     if (ui.has(probe, Comp::SizeFitter)) tx.set(probe, Comp::SizeFitter, Prop::Enabled, 0);
 }
 
+// FR-UI-27a: the padding left of and below the picture is the gap between the
+// picture's right edge and its container's: the nearest ancestor of the
+// picture row that draws a background. Measured in the row's space, so it
+// follows the layout and any scaling. `fallback` (the game's own gap) when
+// there is no such container or the gap isn't a plausible padding.
+float picture_padding(Ui &ui, Handle icon, float fallback) {
+    Handle row = ui.parent(icon);
+    if (!row) return fallback;
+    for (Handle c = ui.parent(row); c; c = ui.parent(c)) {
+        if (!ui.has(c, Comp::Graphic)) continue;
+        Bounds pic = ui.bounds_in(icon, row);
+        float gap = ui.bounds_in(c, row).x_max - pic.x_max;
+        bool plausible = std::isfinite(gap) && gap > 0.5f && gap < (pic.x_max - pic.x_min) / 2.0f;
+        return plausible ? gap : fallback;
+    }
+    return fallback;
+}
+
 // Lays the description out around a picture at the top right of the text
 // column (FR-UI-22). `y` is where the description starts and `picture_bottom`
 // where the picture ends, both measured down from the column's top;
-// `extra_width` is the picture's width plus its gap. Lines that start beside
-// the picture stay in the column's width; as with a CSS float, the last of
-// them may reach a little below the picture. Returns how far below the
-// column's top the text ends.
+// `padding` is the picture's padding (FR-UI-27a) and `extra_width` the
+// picture's width plus that padding. As with a CSS float and its margin, lines
+// that start beside the picture or its bottom padding stay in the column's
+// width, and the last of them may reach a little below; the first full-width
+// line starts below the padding. Returns how far below the column's top the
+// text ends (0 when there is no text).
 float flow_description(Ui &ui, Handle head, Handle continuation, Handle probe, float y, float picture_bottom,
-                       float extra_width) {
+                       float padding, float extra_width) {
     float single = sane_height(ui.get(probe, Comp::Tmp, Prop::TmpLineHeight));
     float pitch = sane_height(ui.get(probe, Comp::Tmp, Prop::TmpLinePitch));
     if (!(pitch > 0.0f) || !(single > 0.0f)) throw Mismatch("could not measure the description lines");
-    float avail = picture_bottom + y;
+    float avail = picture_bottom + padding + y;
     int lines = avail > 0.5f ? static_cast<int>(std::ceil((avail - 0.5f) / pitch)) : 0;
     // Exactly `lines` lines fit; the next one moves to the continuation.
     float head_h = lines > 0 ? single + pitch * static_cast<float>(lines - 1) + 0.5f : 0.0f;
@@ -618,7 +659,7 @@ float flow_description(Ui &ui, Handle head, Handle continuation, Handle probe, f
     }
     float cont_h = sync_continuation(ui, head, continuation);
     if (cont_h > 0.0f) return -cont_y + cont_h;
-    if (lines == 0) return -y;
+    if (lines == 0) return 0.0f;  // nothing beside the picture and no overflow: no text
     return -y + std::min(head_h, std::ceil(sane_height(ui.get(head, Comp::Tmp, Prop::TmpPreferredHeight))));
 }
 
@@ -679,6 +720,7 @@ class EvidenceMenuUnit : public Unit {
         o.description = ui.rect(description);
         o.description_text = read_tmp(ui, description);
         o.fields_spacing = static_cast<float>(ui.get(fields, Comp::VLayout, Prop::LgSpacing));
+        o.row_spacing = static_cast<float>(ui.get(top, Comp::HLayout, Prop::LgSpacing));
         o.fields = ui.rect(fields);
         o.view = ui.rect(view);
         o.view_height = ui.rect_size(view).y;
@@ -715,8 +757,8 @@ class EvidenceMenuUnit : public Unit {
         tx.set_rect(view, top_anchored(o.view, y, o.view_height));
         y -= o.view_height + kInfoGap;
 
-        // FR-UI-22: the description starts left of the picture, below them, and
-        // flows on below the picture. The probe and the continuation are copies
+        // FR-UI-22: the description starts below them, left of the picture or
+        // below it, and flows on below the picture. The probe and the continuation are copies
         // of the description (same font, size, localization font switcher).
         tx.set_parent(description, info, -1);
         Handle probe = tx.clone(description, info, kProbeName);
@@ -747,10 +789,14 @@ class EvidenceMenuUnit : public Unit {
         if (!top || !icon || !info || !head || !fields || !view || !continuation || !probe)
             throw Mismatch("evidence menu structure changed at runtime");
 
-        // The text column fills the space left of the square picture.
-        float spacing = static_cast<float>(ui.get(top, Comp::HLayout, Prop::LgSpacing));
+        // The text column fills the space left of the square picture and its
+        // padding (FR-UI-27a), which is also the row's spacing.
+        const Originals &orig = *orig_;
+        float pad = picture_padding(ui, icon, orig.row_spacing);
+        if (!near(static_cast<float>(ui.get(top, Comp::HLayout, Prop::LgSpacing)), pad))
+            ui.set(top, Comp::HLayout, Prop::LgSpacing, pad);
         float picture_w = ui.rect_size(icon).x;
-        float width = std::max(0.0f, ui.rect_size(top).x - picture_w - spacing);
+        float width = std::max(0.0f, ui.rect_size(top).x - picture_w - pad);
         RectData i = ui.rect(info);
         if (!near(i.sizeDelta.x, width, 0.5f)) {
             i.sizeDelta.x = width;
@@ -763,7 +809,6 @@ class EvidenceMenuUnit : public Unit {
             last_text_ = id;
             last_width_ = width;
             frames_ = 0;
-            const Originals &orig = *orig_;
             // FR-UI-25/26: details and View stack below the name, beside the
             // picture; the description starts below them.
             float fields_h = sync_rows(ui, fields, "Item Field Names", "Item Field Values", orig.fields_spacing);
@@ -772,17 +817,20 @@ class EvidenceMenuUnit : public Unit {
             if (fields_h > 0.0f) y -= fields_h + kInfoGap;
             place_top(ui, view, y, orig.view_height);
             if (ui.active_self(view) && orig.view_height > 0.0f) y -= orig.view_height + kInfoGap;
-            // FR-UI-22: the picture fills the row's height. FR-UI-27/0d: the
-            // text may reach down to where the original description ended,
-            // so the panel keeps its bounds; when it doesn't fit, it shrinks.
+            // FR-UI-22: the picture fills the row's height. With detail rows,
+            // the space beside it is theirs and the description starts below
+            // the picture's padding. FR-UI-27/0d: the text may reach down to
+            // where the original description ended, so the panel keeps its
+            // bounds; when it doesn't fit, it shrinks.
             float row_h = ui.rect_size(info).y;
+            if (fields_h > 0.0f) y = std::min(y, -(row_h + pad));
             float base_h = ui.rect_size(base).y;
             float below = std::max(0.0f, bottom_edge(ui.rect(top), base_h) - bottom_edge(orig.description, base_h));
-            float extra = picture_w + spacing;
+            float extra = picture_w + pad;
             const TmpSize &o = orig.description_text;
             fit_description(ui, {head, continuation, probe}, layout::scale_tmp(o, ctx.settings.scale, true).font_size,
                             layout::fit_floor(o), row_h + below,
-                            [&] { return flow_description(ui, head, continuation, probe, y, row_h, extra); });
+                            [&] { return flow_description(ui, head, continuation, probe, y, row_h, pad, extra); });
         }
     }
 
@@ -792,6 +840,7 @@ class EvidenceMenuUnit : public Unit {
         TmpSize description_text;
         RectData fields, view;
         float fields_spacing = 0;
+        float row_spacing = 0;  // the game's gap between the text column and the picture
         float view_height = 0;
         float name_bottom = 0;
     };
@@ -891,20 +940,15 @@ class NotificationUnit : public Unit {
         // The parent layout now sizes the text; its own fitter would fight it.
         if (ui.has(description, Comp::SizeFitter)) tx.set(description, Comp::SizeFitter, Prop::Enabled, 0);
 
-        // FR-UI-33: fixed square picture on the right, text to its left.
-        const float gap = kPictureGap;
+        // FR-UI-33: fixed square picture on the right, text to its left. The
+        // tick replaces the game's gap with the picture's padding (FR-UI-27a).
         RectData ic = o.icon;
         ic.anchorMin = ic.anchorMax = {1, 1};
         ic.pivot = {1, 1};
         ic.anchoredPosition = {0, 0};
         tx.set_rect(icon, ic);
-        RectData in;
-        in.anchorMin = {0, 0};
-        in.anchorMax = {1, 1};
-        in.pivot = {0.5f, 1};
-        in.sizeDelta = {-(o.icon.sizeDelta.x + gap), 0};
-        in.anchoredPosition = {-(o.icon.sizeDelta.x + gap) / 2.0f, 0};
-        tx.set_rect(info, in);
+        pad_ = kPictureGap;
+        tx.set_rect(info, info_rect());
         RectData tp = o.top;
         tp.sizeDelta.y = std::max(o.top.sizeDelta.y, o.icon.sizeDelta.y);
         tx.set_rect(top, tp);
@@ -916,9 +960,10 @@ class NotificationUnit : public Unit {
         tx.set_rect(fields, top_anchored(o.fields, y, fields_h));
         y -= fields_h + kInfoGap;
 
-        // FR-UI-33: the description flows around the picture. The picture row
-        // grows to hold all of it, so the continuation lives in the text column
-        // and reaches across the picture's width below it.
+        // FR-UI-33: the description flows around the picture, or starts below
+        // it when there are detail rows. The picture row grows to hold all of
+        // it, so the continuation lives in the text column and reaches across
+        // the picture's width below it.
         tx.set_parent(description, info, -1);
         Handle probe = tx.clone(description, info, kProbeName);
         setup_probe(tx, probe);
@@ -935,14 +980,23 @@ class NotificationUnit : public Unit {
         Handle window = ui.find(root, "Window");
         Handle header = ui.find(root, "Window/Header");
         Handle top = ui.find(root, "Window/Top");
+        Handle icon = ui.find(root, "Window/Top/Icon");
+        Handle info = ui.find(root, "Window/Top/Item Info");
         Handle head = ui.find(root, "Window/Top/Item Info/Description");
         Handle continuation = ui.find(root, std::string("Window/Top/Item Info/") + kContinuationName);
         Handle probe = ui.find(root, std::string("Window/Top/Item Info/") + kProbeName);
         Handle fields = ui.find(root, "Window/Top/Item Info/Item Fields");
-        if (!window || !top || !head || !continuation || !probe || !fields)
+        if (!window || !top || !icon || !info || !head || !continuation || !probe || !fields)
             throw Mismatch("notification structure changed at runtime");
+        // FR-UI-27a: the text column ends the picture's padding left of it.
+        float pad = picture_padding(ui, icon, kPictureGap);
+        bool pad_changed = !near(pad, pad_, 0.5f);
+        if (pad_changed) {
+            pad_ = pad;
+            ui.set_rect(info, info_rect());
+        }
         const void *id = ui.text_identity(head, Comp::Tmp);
-        if (id != last_text_ || ++frames_ >= 30) {
+        if (id != last_text_ || pad_changed || ++frames_ >= 30) {
             last_text_ = id;
             frames_ = 0;
             const Originals &o = *orig_;
@@ -954,14 +1008,16 @@ class NotificationUnit : public Unit {
             if (fields_h > 0.0f) y -= fields_h + kInfoGap;
             // FR-UI-33/35: the picture row is as tall as the picture, the name
             // and details, and the description flowing around the picture.
-            // FR-UI-0d: when that would take the panel off the screen, the
-            // description shrinks. The heading sits above the panel and has
-            // its own limit (FR-UI-31).
+            // With detail rows, the description starts below the picture's
+            // padding. FR-UI-0d: when that would take the panel off the
+            // screen, the description shrinks. The heading sits above the
+            // panel and has its own limit (FR-UI-31).
             float min_top = std::max(std::max(o.top.sizeDelta.y, o.icon.sizeDelta.y), -y);
+            if (fields_h > 0.0f) y = std::min(y, -(o.icon.sizeDelta.y + pad_));
             float spacing = static_cast<float>(ui.get(window, Comp::VLayout, Prop::LgSpacing));
             auto panel_height = [&] {
                 float top_h = std::max(min_top, flow_description(ui, head, continuation, probe, y,
-                                                                 o.icon.sizeDelta.y, picture_width()));
+                                                                 o.icon.sizeDelta.y, pad_, picture_width()));
                 set_height(ui, top, top_h);
                 float total = 0;
                 int shown = 0;
@@ -996,12 +1052,26 @@ class NotificationUnit : public Unit {
         return orig_->name.anchoredPosition.y - orig_->name.sizeDelta.y * static_cast<float>(scale);
     }
 
-    // The picture and its gap: how much wider than the text column the
+    // The picture and its padding: how much wider than the text column the
     // description is below the picture.
-    float picture_width() const { return orig_->icon.sizeDelta.x + kPictureGap; }
+    float picture_width() const { return orig_->icon.sizeDelta.x + pad_; }
+
+    // The text column: the row's full height, ending the picture and its
+    // padding before the row's right edge.
+    RectData info_rect() const {
+        RectData in;
+        in.anchorMin = {0, 0};
+        in.anchorMax = {1, 1};
+        in.pivot = {0.5f, 1};
+        in.sizeDelta = {-picture_width(), 0};
+        in.anchoredPosition = {-picture_width() / 2.0f, 0};
+        return in;
+    }
+    // The gap used when the panel's padding can't be measured.
     static constexpr float kPictureGap = 30.0f;
 
     std::optional<Originals> orig_;
+    float pad_ = kPictureGap;
     const void *last_text_ = nullptr;
     int frames_ = 0;
 };

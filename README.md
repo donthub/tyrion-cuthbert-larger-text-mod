@@ -6,8 +6,8 @@ Makes the game's text easier to read on small screens such as the Steam Deck:
 - **Cross-examination:** *Press* and *Present* move to the top corners; the arrows sit above the panel.
 - **Story images and building plans:** shrink so they stay above the taller dialogue panel.
 - **Text log:** larger, wider, normal letter spacing. The current line no longer disappears when you close the log.
-- **Evidence menu (Clues, Spells, People):** larger description. The picture is on the right. The details and View button stay beside it under the item name, and the description starts below them and wraps around the picture: lines beside it are narrower, and the text runs on at full width below it, without a gap.
-- **"Obtained / updated evidence" popup:** wider and larger, with the same picture-and-description layout: details beside the picture, and the description wrapping around it.
+- **Evidence menu (Clues, Spells, People):** larger description. The picture is on the right, with the same padding on its left and below it as between it and the panel edge. The details and View button stay beside it under the item name. When there are details, the description starts below the picture at full width; otherwise it starts below the name and wraps around the picture: lines beside it are narrower, and the text runs on at full width below it, without a gap.
+- **"Obtained / updated evidence" popup:** wider and larger, with the same picture-and-description layout: details beside the picture, and the description below the picture or, without details, wrapping around it.
 - **Pause when unfocused:** the game no longer reacts to input while another window has focus.
 
 Text that would not fit its box at the larger size (a very long line, name or description) is scaled down just enough to fit, but never below the game's own size.

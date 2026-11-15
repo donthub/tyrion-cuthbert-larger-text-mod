@@ -84,6 +84,22 @@ Loading sequence:
   two lines) on an invisible clone of the description (`LTM Line Probe`), so the
   measuring never touches the displayed text and follows font changes from the
   localization font switcher.
+  The room beside the picture includes its bottom padding, like a CSS float's
+  margin, so the first full-width line starts below the padding. When detail
+  rows are shown, the description starts at `max(below the details/View,
+  picture + padding)`, so the head gets no lines and all text goes to the
+  continuation. A row counts only when it is active in the hierarchy (the
+  game may hide the whole details area and leave stale row texts) and its name
+  or value has visible text after removing rich-text tags and whitespace,
+  because TextMesh Pro reports a line height even for blank text.
+- **Picture padding (FR-UI-27a).** The container is the nearest ancestor of the
+  picture row with a `Graphic` (the panel background). The padding is its right
+  edge minus the picture's right edge, both mapped into the row's space with
+  `Transform.TransformPoint` / `InverseTransformPoint` (`Ui::bounds_in`). It
+  sets the evidence row's `HorizontalLayoutGroup` spacing and the popup's text
+  column inset, and is re-measured with each layout pass. Without such an
+  ancestor, or if the gap is not between 0.5 and half the picture's width, the
+  game's own gap is kept (row spacing, or 30 in the popup).
 - **Unattended in-game checks.** `[debug] commands = true` enables a command file
   (see the README).
 

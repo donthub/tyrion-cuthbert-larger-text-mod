@@ -609,6 +609,12 @@ TEST(evidence_menu_layout_and_overflow) {
     MemLog log;
     Runtime rt(settings(1.5), log);
     Node *menu = make_menu(ui);
+    // FR-UI-27a: the container draws the panel background; the picture sits
+    // 20 units inside its right edge, so that is the picture's padding.
+    Node *panel = ui.path(menu, "Container/Right/Container");
+    panel->comps[Comp::Graphic];
+    ui.bounds[panel] = {0, 0, 1000, 500};
+    ui.bounds[ui.path(panel, "Top/Icon")] = {810, 310, 980, 480};
     rt.on_instance(ui, Target::ItemMenu, menu);
     CHECK(log.has("FEATURE evidence_menu applied"));
     Node *base = ui.path(menu, "Container/Right/Container");
@@ -657,37 +663,55 @@ TEST(evidence_menu_layout_and_overflow) {
     CHECK_NEAR(view->rect.sizeDelta.x, 200);
     CHECK_NEAR(view->rect.sizeDelta.y, 50);
     CHECK_NEAR(head->rect.anchoredPosition.y, -202);
-    // Item info fills the space left of the picture.
-    CHECK_NEAR(info->rect.sizeDelta.x, 1000 - 170 - 10);
-    // FR-UI-22: the details already reach below the picture (170), so no line
-    // runs beside it: the continuation starts right there, at the full row
-    // width (column + picture + spacing).
+    // Item info fills the space left of the picture and its padding, which is
+    // also the row's spacing (was 10).
+    CHECK_NEAR(info->rect.sizeDelta.x, 1000 - 170 - 20);
+    CHECK_NEAR(top->comps[Comp::HLayout][Prop::LgSpacing], 20);
+    // FR-UI-22: with detail rows, no description line runs beside the
+    // picture. Here the details already reach below the picture and its
+    // padding (190), so the continuation starts right below them, at the full
+    // row width (column + picture + padding).
     CHECK_NEAR(head->rect.sizeDelta.y, 0);
     CHECK_NEAR(cont->rect.anchorMin.y, 1);
     CHECK_NEAR(cont->rect.pivot.y, 1);
     CHECK_NEAR(cont->rect.anchoredPosition.y, -202);
-    CHECK_NEAR(cont->rect.sizeDelta.x, 170 + 10);
+    CHECK_NEAR(cont->rect.sizeDelta.x, 170 + 20);
     CHECK_NEAR(cont->rect.anchoredPosition.x, 0);
     CHECK_NEAR(cont->rect.pivot.x, 0);
 
-    // Empty details take no height; the View button and description move up.
-    for (const char *row : {"Item Field", "Item Field (1)"})
-        for (const char *label : {"Item Field Names", "Item Field Values"})
-            ui.path(fields, std::string(row) + "/" + label)->comps[Comp::Tmp][Prop::TmpFontSize] = 0;
+    // One detail row: the View button ends at -156, beside the picture, but
+    // the description still starts below the picture's padding, at -190.
+    for (const char *label : {"Item Field Names", "Item Field Values"})
+        ui.path(fields, std::string("Item Field (1)/") + label)->comps[Comp::Tmp][Prop::TmpFontSize] = 0;
+    head->text_version++;  // new text
+    rt.on_frame(ui);
+    CHECK_NEAR(fields->rect.sizeDelta.y, 36);
+    CHECK_NEAR(view->rect.anchoredPosition.y, -106);
+    CHECK_NEAR(head->rect.anchoredPosition.y, -190);
+    CHECK_NEAR(head->rect.sizeDelta.y, 0);
+    CHECK_NEAR(cont->rect.anchoredPosition.y, -190);
+    CHECK_NEAR(cont->rect.sizeDelta.x, 170 + 20);
+
+    // No detail rows: they take no height, the View button moves up, and the
+    // description starts below it, beside the picture.
+    for (const char *label : {"Item Field Names", "Item Field Values"})
+        ui.path(fields, std::string("Item Field/") + label)->comps[Comp::Tmp][Prop::TmpFontSize] = 0;
     head->text_version++;  // new text
     rt.on_frame(ui);
     CHECK_NEAR(fields->rect.sizeDelta.y, 0);
     CHECK_NEAR(view->rect.anchoredPosition.y, -60);
     CHECK_NEAR(head->rect.anchoredPosition.y, -120);
-    // FR-UI-22: 50 units are left beside the picture. Lines are 43.2 apart
-    // (fake: 1.2 * size), so two lines start beside it; the head holds exactly
-    // those, and the continuation starts on the next line of the same grid.
+    // FR-UI-22/27a: 50 units are left beside the picture and 20 more beside
+    // its bottom padding. Lines are 43.2 apart (fake: 1.2 * size), so two
+    // lines start there; the head holds exactly those, and the continuation
+    // starts on the next line of the same grid, below the padding.
     CHECK_NEAR(head->rect.sizeDelta.y, 43.2 + 43.2 + 0.5);
     CHECK_NEAR(cont->rect.anchoredPosition.y, -120 - 2 * 43.2);
 
     // FR-UI-0d: a long description shrinks so the text ends above where the
     // original description ended: 170 (picture row) + 330 (below it) = 500
-    // from the column's top. With two lines beside the picture, that is
+    // from the column's top. With two lines beside the picture (70 units at
+    // lines up to 1.2 * 30.62 apart), that is
     // 120 + 2 * 1.2 * size + ceil(10 * size) <= 500.5, so about 30.62, below
     // the enlarged 36 and above the game's own minimum of 18.
     cont->text_lines = 10;
@@ -723,6 +747,12 @@ TEST(evidence_notification_layout) {
     MemLog log;
     Runtime rt(settings(2.0), log);
     Node *p = make_popup(ui);
+    // FR-UI-27a: the panel's padding: the picture sits 25 units inside its
+    // right edge.
+    Node *panel = ui.path(p, "Window");
+    panel->comps[Comp::Graphic];
+    ui.bounds[panel] = {0, 0, 1600, 1000};
+    ui.bounds[ui.path(panel, "Top/Icon")] = {1305, 705, 1575, 975};
     rt.on_instance(ui, Target::Notification, p);
     CHECK(log.has("FEATURE evidence_notification applied"));
     Node *w = ui.path(p, "Window");
@@ -753,42 +783,66 @@ TEST(evidence_notification_layout) {
     // Below the enlarged name (bottom at -100): three rows of 72 at -110, the
     // description at -336. The picture row grows from 270 to fit them.
     Node *top = ui.path(w, "Top");
+    Node *info = ui.path(w, "Top/Item Info");
     rt.on_frame(ui);
+    // FR-UI-27a: the text column ends the padding (25, was 30) left of the
+    // picture.
+    CHECK_NEAR(info->rect.sizeDelta.x, -(270 + 25));
+    CHECK_NEAR(info->rect.anchoredPosition.x, -(270 + 25) / 2.0);
     CHECK_NEAR(fields->rect.anchorMin.y, 1);
     CHECK_NEAR(fields->rect.anchoredPosition.y, -110);
     CHECK_NEAR(fields->rect.sizeDelta.y, 216);
     CHECK_NEAR(head->rect.anchoredPosition.y, -336);
     CHECK_NEAR(top->rect.sizeDelta.y, 336);
-    CHECK_NEAR(head->rect.sizeDelta.y, 0);  // no room beside the picture
+    CHECK_NEAR(head->rect.sizeDelta.y, 0);  // no line beside the picture
     CHECK_NEAR(cont->rect.anchoredPosition.y, -336);
-    CHECK_NEAR(cont->rect.sizeDelta.x, 270 + 30);  // across the picture's width
-    // Empty rows take no height; hidden rows are skipped. The picture row
-    // goes back to the picture's height.
+    CHECK_NEAR(cont->rect.sizeDelta.x, 270 + 25);  // across the picture and its padding
+    // Empty rows take no height; hidden rows are skipped. With one detail
+    // row left (ending at -182, beside the picture), the description starts
+    // below the picture's padding, at -295. The picture row goes back to the
+    // picture's height while there is no text below it.
     ui.path(fields, "Item Field (2)")->active = false;
     ui.path(fields, "Item Field (1)/Item Field Names")->comps[Comp::Tmp][Prop::TmpFontSize] = 0;
     ui.path(fields, "Item Field (1)/Item Field Values")->comps[Comp::Tmp][Prop::TmpFontSize] = 0;
     rt.on_frame(ui);
     CHECK_NEAR(ui.path(fields, "Item Field (1)")->rect.sizeDelta.y, 0);
     CHECK_NEAR(fields->rect.sizeDelta.y, 72);
-    CHECK_NEAR(head->rect.anchoredPosition.y, -192);
+    CHECK_NEAR(head->rect.anchoredPosition.y, -295);
+    CHECK_NEAR(head->rect.sizeDelta.y, 0);
+    CHECK_NEAR(cont->rect.anchoredPosition.y, -295);
     CHECK_NEAR(top->rect.sizeDelta.y, 270);
-    // 78 units beside the picture, lines 57.6 apart: two lines beside it.
-    CHECK_NEAR(head->rect.sizeDelta.y, 57.6 + 57.6 + 0.5);
-    CHECK_NEAR(cont->rect.anchoredPosition.y, -192 - 2 * 57.6);
 
-    // FR-UI-35/0d: the panel grows down from 82.5 % of the screen and has
-    // 891 - 14 = 877 units, all of it the picture row, which holds the text
-    // flowing around the picture: 192 + 2 * 1.2 * size + ceil(13 * size)
-    // <= 877.5 up to a size of about 44.47.
+    // No detail rows: the description starts below the name and wraps
+    // around the picture. 160 units beside the picture plus 25 of padding,
+    // lines 57.6 apart: four lines beside it.
+    Node *row0 = ui.path(fields, "Item Field");
+    ui.path(row0, "Item Field Names")->comps[Comp::Tmp][Prop::TmpFontSize] = 0;
+    ui.path(row0, "Item Field Values")->comps[Comp::Tmp][Prop::TmpFontSize] = 0;
+    head->text_version++;  // new text
+    rt.on_frame(ui);
+    CHECK_NEAR(fields->rect.sizeDelta.y, 0);
+    CHECK_NEAR(head->rect.anchoredPosition.y, -110);
+    CHECK_NEAR(head->rect.sizeDelta.y, 4 * 57.6 + 0.5);
+    CHECK_NEAR(cont->rect.anchoredPosition.y, -110 - 4 * 57.6);
+    CHECK_NEAR(top->rect.sizeDelta.y, 270);
+
+    // FR-UI-35/0d: with a detail row again, the panel grows down from 82.5 %
+    // of the screen and has 891 - 14 = 877 units, all of it the picture row,
+    // which holds the text below the picture and its padding:
+    // 295 + ceil(13 * size) <= 877.5 up to a size of about 44.77.
+    ui.path(row0, "Item Field Names")->comps[Comp::Tmp][Prop::TmpFontSize] = 60;
+    ui.path(row0, "Item Field Values")->comps[Comp::Tmp][Prop::TmpFontSize] = 60;
     ui.overflowing.insert(head);
     cont->text_lines = 13;
     head->comps[Comp::Button];  // new text
     rt.on_frame(ui);
     CHECK(cont->active);
+    CHECK_NEAR(fields->rect.sizeDelta.y, 72);
     double fitted = head->comps[Comp::Tmp][Prop::TmpFontSize];
-    CHECK(fitted <= 44.48 && fitted > 44.47 - 0.5);
+    CHECK(fitted <= 44.77 && fitted > 44.77 - 0.5);
     CHECK_NEAR(cont->comps[Comp::Tmp][Prop::TmpFontSize], fitted);
-    CHECK_NEAR(top->rect.sizeDelta.y, 192 + 2 * 1.2 * fitted + std::ceil(13 * fitted));
+    CHECK_NEAR(cont->rect.anchoredPosition.y, -295);
+    CHECK_NEAR(top->rect.sizeDelta.y, 295 + std::ceil(13 * fitted));
     CHECK(top->rect.sizeDelta.y <= 877.5);
     // Short text keeps the enlarged size; far too long stops at the original 24.
     cont->text_lines = 2;
@@ -799,6 +853,77 @@ TEST(evidence_notification_layout) {
     head->comps.erase(Comp::AspectFitter);
     rt.on_frame(ui);
     CHECK_NEAR(head->comps[Comp::Tmp][Prop::TmpFontSize], 24);
+}
+
+TEST(evidence_without_details_wraps_around_the_picture) {
+    // FR-UI-22/26: rows that are hidden, or whose texts are empty, blank or
+    // only tags, are no detail rows: the description starts below the name
+    // and View button and wraps around the picture (fallback gap 10).
+    FakeUi ui;
+    MemLog log;
+    Runtime rt(settings(1.5), log);
+    Node *menu = make_menu(ui);
+    rt.on_instance(ui, Target::ItemMenu, menu);
+    Node *info = ui.path(menu, "Container/Right/Container/Top/Item Info");
+    Node *fields = ui.path(info, "Fields");
+    Node *head = ui.path(info, "Description");
+    Node *cont = ui.path(info, "LTM Description Continuation");
+    auto check_wraps = [&] {
+        head->text_version++;  // new entry
+        rt.on_frame(ui);
+        CHECK_NEAR(fields->rect.sizeDelta.y, 0);
+        CHECK_NEAR(ui.path(fields, "Item Field")->rect.sizeDelta.y, 0);
+        CHECK_NEAR(head->rect.anchoredPosition.y, -120);
+        // 50 units beside the picture, 10 of padding, lines 43.2 apart.
+        CHECK_NEAR(head->rect.sizeDelta.y, 2 * 43.2 + 0.5);
+        CHECK_NEAR(cont->rect.anchoredPosition.y, -120 - 2 * 43.2);
+    };
+    auto set_texts = [&](const std::string &t) {
+        for (const char *row : {"Item Field", "Item Field (1)"})
+            for (const char *label : {"Item Field Names", "Item Field Values"})
+                ui.path(fields, std::string(row) + "/" + label)->text = t;
+    };
+    // With details first, so the rows have stale heights.
+    rt.on_frame(ui);
+    CHECK_NEAR(fields->rect.sizeDelta.y, 72);
+    // The whole details area hidden, rows keeping their old texts.
+    fields->active = false;
+    check_wraps();
+    fields->active = true;
+    for (const char *t : {"", "  \n", "<color=#FFF></color>", "\xC2\xA0"}) {
+        set_texts(t);
+        check_wraps();
+    }
+    // Details again: below the picture.
+    set_texts("Found");
+    head->text_version++;
+    rt.on_frame(ui);
+    CHECK_NEAR(fields->rect.sizeDelta.y, 72);
+    CHECK_NEAR(head->rect.sizeDelta.y, 0);
+}
+
+TEST(picture_padding_falls_back_to_the_game_gap) {
+    // FR-UI-27a: no container with a background (or an implausible gap):
+    // the game's own gap between the text column and the picture is kept.
+    FakeUi ui;
+    MemLog log;
+    Runtime rt(settings(1.5), log);
+    Node *menu = make_menu(ui);
+    rt.on_instance(ui, Target::ItemMenu, menu);
+    rt.on_frame(ui);
+    Node *top = ui.path(menu, "Container/Right/Container/Top");
+    CHECK_NEAR(top->comps[Comp::HLayout][Prop::LgSpacing], 10);
+    CHECK_NEAR(ui.path(top, "Item Info")->rect.sizeDelta.x, 1000 - 170 - 10);
+
+    Node *p = make_popup(ui);
+    Node *w = ui.path(p, "Window");
+    w->comps[Comp::Graphic];
+    ui.bounds[w] = {0, 0, 1600, 1000};
+    ui.bounds[ui.path(w, "Top/Icon")] = {1000, 705, 1270, 975};  // 330: wider than half the picture
+    rt.on_instance(ui, Target::Notification, p);
+    rt.on_frame(ui);
+    CHECK_NEAR(ui.path(w, "Top/Item Info")->rect.sizeDelta.x, -(270 + 30));
+    CHECK_NEAR(ui.path(w, "Top/Item Info/LTM Description Continuation")->rect.sizeDelta.x, 270 + 30);
 }
 
 TEST(tick_errors_disable_only_the_feature) {
