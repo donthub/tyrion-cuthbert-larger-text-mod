@@ -482,12 +482,19 @@ class TextLogUnit : public Unit {
 };
 
 // ---------------------------------------------------------------------------
-// Description that starts beside the picture and continues full-width below it
-// (FR-UI-22 ... FR-UI-24, FR-UI-33). TextMesh Pro's linked overflow does the
-// split: the game keeps writing the localized text to its own component, and
-// the continuation only ever shows what doesn't fit there.
+// Description that floats around the picture (FR-UI-22 ... FR-UI-24, FR-UI-33).
+// TextMesh Pro can't wrap one text box around a region, so linked overflow
+// does the split: the game keeps writing the localized text to its own
+// component (the head, beside the picture), and the continuation only ever
+// shows what doesn't fit there. Both parts sit on one line grid: the head holds
+// exactly the lines that start beside the picture, and the continuation starts
+// one line pitch below the head's last line, at the full row width. So the text
+// reads as one block, like CSS `float: right`.
 
 const char *const kContinuationName = "LTM Description Continuation";
+// An invisible copy of the description, used only to measure line metrics at
+// the current font and size, so the measuring never touches displayed text.
+const char *const kProbeName = "LTM Line Probe";
 
 // Shows the continuation only while there is overflow and sizes it to the
 // rendered overflow text. Returns its height (0 when hidden).
@@ -539,27 +546,110 @@ void set_height(Ui &ui, Handle go, float h) {
     }
 }
 
+// Gap between the item name, the detail rows, the View button and the
+// description beside the picture.
+constexpr float kInfoGap = 10.0f;
+
+// Anchors a rect to the top of its parent at `y` with height `h`, keeping its
+// horizontal layout.
+RectData top_anchored(RectData r, float y, float h) {
+    r.anchorMin.y = r.anchorMax.y = 1.0f;
+    r.pivot.y = 1.0f;
+    r.anchoredPosition.y = y;
+    r.sizeDelta.y = h;
+    return r;
+}
+
+// Moves a top-anchored rect to `y` with height `h`.
+void place_top(Ui &ui, Handle go, float y, float h) {
+    RectData r = ui.rect(go);
+    if (!near(r.anchoredPosition.y, y, 0.5f) || !near(r.sizeDelta.y, h, 0.5f)) {
+        r.anchoredPosition.y = y;
+        r.sizeDelta.y = h;
+        ui.set_rect(go, r);
+    }
+}
+
+// A text in the text column: from its left edge, `extra_width` wider than the
+// column (0 for the column itself, the picture and its gap for the full row),
+// top-anchored at `y` with height `h`.
+RectData flow_rect(float y, float h, float extra_width) {
+    RectData d;
+    d.anchorMin = {0, 1};
+    d.anchorMax = {1, 1};
+    d.pivot = {0, 1};
+    d.anchoredPosition = {0, y};
+    d.sizeDelta = {extra_width, h};
+    return d;
+}
+
+// Makes `probe` an invisible measuring copy of the description.
+void setup_probe(Tx &tx, Handle probe) {
+    Ui &ui = tx.ui();
+    tx.set_rect(probe, flow_rect(0, 0, 0));
+    tx.set(probe, Comp::Tmp, Prop::TmpOverflowMode, kOverflowOverflow);
+    tx.set(probe, Comp::Tmp, Prop::GraphicAlpha, 0);
+    if (ui.has(probe, Comp::SizeFitter)) tx.set(probe, Comp::SizeFitter, Prop::Enabled, 0);
+}
+
+// Lays the description out around a picture at the top right of the text
+// column (FR-UI-22). `y` is where the description starts and `picture_bottom`
+// where the picture ends, both measured down from the column's top;
+// `extra_width` is the picture's width plus its gap. Lines that start beside
+// the picture stay in the column's width; as with a CSS float, the last of
+// them may reach a little below the picture. Returns how far below the
+// column's top the text ends.
+float flow_description(Ui &ui, Handle head, Handle continuation, Handle probe, float y, float picture_bottom,
+                       float extra_width) {
+    float single = sane_height(ui.get(probe, Comp::Tmp, Prop::TmpLineHeight));
+    float pitch = sane_height(ui.get(probe, Comp::Tmp, Prop::TmpLinePitch));
+    if (!(pitch > 0.0f) || !(single > 0.0f)) throw Mismatch("could not measure the description lines");
+    float avail = picture_bottom + y;
+    int lines = avail > 0.5f ? static_cast<int>(std::ceil((avail - 0.5f) / pitch)) : 0;
+    // Exactly `lines` lines fit; the next one moves to the continuation.
+    float head_h = lines > 0 ? single + pitch * static_cast<float>(lines - 1) + 0.5f : 0.0f;
+    place_top(ui, head, y, head_h);
+    float cont_y = y - pitch * static_cast<float>(lines);
+    RectData r = ui.rect(continuation);
+    if (!near(r.anchoredPosition.y, cont_y, 0.5f) || !near(r.sizeDelta.x, extra_width, 0.5f)) {
+        r.anchoredPosition.y = cont_y;
+        r.sizeDelta.x = extra_width;
+        ui.set_rect(continuation, r);
+    }
+    float cont_h = sync_continuation(ui, head, continuation);
+    if (cont_h > 0.0f) return -cont_y + cont_h;
+    if (lines == 0) return -y;
+    return -y + std::min(head_h, std::ceil(sane_height(ui.get(head, Comp::Tmp, Prop::TmpPreferredHeight))));
+}
+
 void set_font_size(Ui &ui, Handle go, float size) {
     if (!near(static_cast<float>(ui.get(go, Comp::Tmp, Prop::TmpFontSize)), size)) {
         ui.set(go, Comp::Tmp, Prop::TmpFontSize, size);
     }
 }
 
-// FR-UI-0d for a description split into head and continuation: finds the
-// largest size in [floor, target] at which `needed(continuation height)` fits
-// into `available`, and leaves both parts synced at that size (FR-UI-23).
-// Returns the continuation height at that size.
-float fit_description(Ui &ui, Handle head, Handle continuation, float target, float floor, float available,
-                      const std::function<float(float)> &needed) {
+// FR-UI-0d for the flowed description: finds the largest size in
+// [floor, target] at which the height `layout()` needs fits into `available`,
+// and leaves all parts laid out at that size (same size in both, FR-UI-23).
+void fit_description(Ui &ui, std::initializer_list<Handle> texts, float target, float floor, float available,
+                     const std::function<float()> &layout) {
+    std::vector<Handle> parts(texts);
     auto measure = [&](float size) {
-        set_font_size(ui, head, size);
-        set_font_size(ui, continuation, size);
-        return sync_continuation(ui, head, continuation);
+        for (Handle t : parts) set_font_size(ui, t, size);
+        return layout();
     };
     // No usable measure yet (e.g. before the first layout): keep the enlarged size.
-    if (!(available > 0.0f)) return measure(target);
-    float size = layout::largest_fitting(target, floor, [&](float s) { return needed(measure(s)) <= available + 0.5f; });
-    return measure(size);
+    if (!(available > 0.0f)) {
+        measure(target);
+        return;
+    }
+    float size = layout::largest_fitting(target, floor, [&](float s) { return measure(s) <= available + 0.5f; });
+    measure(size);
+}
+
+// Bottom edge of a rect, measured up from its parent's bottom (parent height `h`).
+float bottom_edge(const RectData &r, float h) {
+    return r.anchorMin.y * h + r.anchoredPosition.y - r.sizeDelta.y * r.pivot.y;
 }
 
 // ---------------------------------------------------------------------------
@@ -580,15 +670,18 @@ class EvidenceMenuUnit : public Unit {
         Handle info = need(ui, base, "Top/Item Info");
         need(ui, base, "Top/Item Info/Item Name", {Comp::Tmp});
         Handle fields = need(ui, base, "Top/Item Info/Fields", {Comp::VLayout});
-        need(ui, base, "Top/Item Info/View Button", {Comp::Button});
+        Handle view = need(ui, base, "Top/Item Info/View Button", {Comp::Button});
+        if (ui.find(info, kContinuationName)) throw AlreadyApplied();
         Handle description = need(ui, base, "Description", {Comp::Tmp});
         expect(ui.parent(icon) == top && ui.parent(info) == top, "evidence picture layout changed");
-        if (ui.find(base, "LTM Evidence Lower")) throw AlreadyApplied();
         if (orig_) return;
         Originals o;
         o.description = ui.rect(description);
         o.description_text = read_tmp(ui, description);
         o.fields_spacing = static_cast<float>(ui.get(fields, Comp::VLayout, Prop::LgSpacing));
+        o.fields = ui.rect(fields);
+        o.view = ui.rect(view);
+        o.view_height = ui.rect_size(view).y;
         RectData name = ui.rect(ui.find(base, "Top/Item Info/Item Name"));
         o.name_bottom = name.anchoredPosition.y - name.sizeDelta.y;  // top-anchored, top pivot
         expect(name.anchorMin.y == 1.0f && name.anchorMax.y == 1.0f && name.pivot.y == 1.0f,
@@ -611,36 +704,27 @@ class EvidenceMenuUnit : public Unit {
         TmpSize t = layout::scale_tmp(o.description_text, ctx.settings.scale, true);
         t.auto_size = false;
         write_tmp(tx, description, t);
+        if (ui.has(description, Comp::SizeFitter)) tx.set(description, Comp::SizeFitter, Prop::Enabled, 0);
 
-        // The continuation is a copy of the description (same font, size,
-        // localization font switcher), that renders the overflow below.
-        Handle lower = tx.create("LTM Evidence Lower", base);
-        tx.set_rect(lower, o.description);
-        tx.add(lower, Comp::VLayout);
-        tx.set(lower, Comp::VLayout, Prop::LgSpacing, 15);
-        tx.set(lower, Comp::VLayout, Prop::LgChildAlignment, 0);  // upper left
-        tx.set(lower, Comp::VLayout, Prop::LgControlWidth, 1);
-        tx.set(lower, Comp::VLayout, Prop::LgControlHeight, 0);
-        tx.set(lower, Comp::VLayout, Prop::LgExpandWidth, 1);
-        tx.set(lower, Comp::VLayout, Prop::LgExpandHeight, 0);
-        Handle continuation = tx.clone(description, lower, kContinuationName);
+        // FR-UI-25: details and View stay beside the picture, below the name;
+        // the per-frame tick stacks them by their current heights.
+        float y = o.name_bottom - kInfoGap;
+        float fields_h = o.fields.sizeDelta.y;
+        tx.set_rect(fields, top_anchored(o.fields, y, fields_h));
+        y -= fields_h + kInfoGap;
+        tx.set_rect(view, top_anchored(o.view, y, o.view_height));
+        y -= o.view_height + kInfoGap;
+
+        // FR-UI-22: the description starts left of the picture, below them, and
+        // flows on below the picture. The probe and the continuation are copies
+        // of the description (same font, size, localization font switcher).
+        tx.set_parent(description, info, -1);
+        Handle probe = tx.clone(description, info, kProbeName);
+        setup_probe(tx, probe);
+        Handle continuation = tx.clone(description, info, kContinuationName);
         tx.set(continuation, Comp::Tmp, Prop::TmpOverflowMode, kOverflowOverflow);
-        if (ui.has(continuation, Comp::SizeFitter)) tx.set(continuation, Comp::SizeFitter, Prop::Enabled, 0);
-
-        // FR-UI-25: details and View follow below the description.
-        tx.set_parent(fields, lower, -1);
-        tx.set_parent(view, lower, -1);
-
-        // FR-UI-22: the description starts left of the picture, below the name.
-        tx.set_parent(description, info, 1);
-        RectData d;
-        d.anchorMin = {0, 0};
-        d.anchorMax = {1, 1};
-        d.pivot = {0.5f, 1};
-        float head_top = o.name_bottom - 10.0f;
-        d.anchoredPosition = {0, head_top};
-        d.sizeDelta = {0, head_top};
-        tx.set_rect(description, d);
+        tx.set_rect(continuation, flow_rect(y, 0, 0));
+        tx.set_rect(description, flow_rect(y, 0, 0));
         tx.set(description, Comp::Tmp, Prop::TmpOverflowMode, kOverflowLinked);
         tx.set_linked_text(description, continuation);
 
@@ -656,15 +740,17 @@ class EvidenceMenuUnit : public Unit {
         Handle icon = ui.find(base, "Top/Icon");
         Handle info = ui.find(base, "Top/Item Info");
         Handle head = ui.find(base, "Top/Item Info/Description");
-        Handle lower = ui.find(base, "LTM Evidence Lower");
-        if (!top || !icon || !info || !head || !lower) throw Mismatch("evidence menu structure changed at runtime");
-        Handle continuation = ui.find(lower, kContinuationName);
-        Handle fields = ui.find(lower, "Fields");
-        if (!continuation || !fields) throw Mismatch("evidence menu structure changed at runtime");
+        Handle fields = ui.find(base, "Top/Item Info/Fields");
+        Handle view = ui.find(base, "Top/Item Info/View Button");
+        Handle continuation = info ? ui.find(info, kContinuationName) : nullptr;
+        Handle probe = info ? ui.find(info, kProbeName) : nullptr;
+        if (!top || !icon || !info || !head || !fields || !view || !continuation || !probe)
+            throw Mismatch("evidence menu structure changed at runtime");
 
         // The text column fills the space left of the square picture.
         float spacing = static_cast<float>(ui.get(top, Comp::HLayout, Prop::LgSpacing));
-        float width = std::max(0.0f, ui.rect_size(top).x - ui.rect_size(icon).x - spacing);
+        float picture_w = ui.rect_size(icon).x;
+        float width = std::max(0.0f, ui.rect_size(top).x - picture_w - spacing);
         RectData i = ui.rect(info);
         if (!near(i.sizeDelta.x, width, 0.5f)) {
             i.sizeDelta.x = width;
@@ -677,21 +763,26 @@ class EvidenceMenuUnit : public Unit {
             last_text_ = id;
             last_width_ = width;
             frames_ = 0;
-            float fields_h = sync_rows(ui, fields, "Item Field Names", "Item Field Values", orig_->fields_spacing);
-            set_height(ui, fields, fields_h);
-            // FR-UI-0d: the continuation, details and View button stack in the
-            // lower area, which keeps the panel's bounds (FR-UI-27). When they
-            // don't fit, the description shrinks.
-            Handle view = ui.find(lower, "View Button");
-            float spacing_lower = static_cast<float>(ui.get(lower, Comp::VLayout, Prop::LgSpacing));
-            float view_h = view && ui.active_self(view) ? ui.rect_size(view).y : 0.0f;
-            float rest = fields_h + (view_h > 0.0f ? spacing_lower + view_h : 0.0f);
-            auto needed = [&](float continuation_h) {
-                return rest + (continuation_h > 0.0f ? continuation_h + spacing_lower : 0.0f);
-            };
-            const TmpSize &o = orig_->description_text;
-            fit_description(ui, head, continuation, layout::scale_tmp(o, ctx.settings.scale, true).font_size,
-                            layout::fit_floor(o), ui.rect_size(lower).y, needed);
+            const Originals &orig = *orig_;
+            // FR-UI-25/26: details and View stack below the name, beside the
+            // picture; the description starts below them.
+            float fields_h = sync_rows(ui, fields, "Item Field Names", "Item Field Values", orig.fields_spacing);
+            float y = orig.name_bottom - kInfoGap;
+            place_top(ui, fields, y, fields_h);
+            if (fields_h > 0.0f) y -= fields_h + kInfoGap;
+            place_top(ui, view, y, orig.view_height);
+            if (ui.active_self(view) && orig.view_height > 0.0f) y -= orig.view_height + kInfoGap;
+            // FR-UI-22: the picture fills the row's height. FR-UI-27/0d: the
+            // text may reach down to where the original description ended,
+            // so the panel keeps its bounds; when it doesn't fit, it shrinks.
+            float row_h = ui.rect_size(info).y;
+            float base_h = ui.rect_size(base).y;
+            float below = std::max(0.0f, bottom_edge(ui.rect(top), base_h) - bottom_edge(orig.description, base_h));
+            float extra = picture_w + spacing;
+            const TmpSize &o = orig.description_text;
+            fit_description(ui, {head, continuation, probe}, layout::scale_tmp(o, ctx.settings.scale, true).font_size,
+                            layout::fit_floor(o), row_h + below,
+                            [&] { return flow_description(ui, head, continuation, probe, y, row_h, extra); });
         }
     }
 
@@ -699,7 +790,9 @@ class EvidenceMenuUnit : public Unit {
     struct Originals {
         RectData description;
         TmpSize description_text;
+        RectData fields, view;
         float fields_spacing = 0;
+        float view_height = 0;
         float name_bottom = 0;
     };
     std::optional<Originals> orig_;
@@ -725,8 +818,8 @@ class NotificationUnit : public Unit {
         need(ui, root, "Window/Top/Item Info");
         Handle name = need(ui, root, "Window/Top/Item Info/Item Name", {Comp::Tmp});
         Handle fields = need(ui, root, "Window/Top/Item Info/Item Fields", {Comp::VLayout});
+        if (ui.find(root, std::string("Window/Top/Item Info/") + kContinuationName)) throw AlreadyApplied();
         Handle description = need(ui, root, "Window/Description", {Comp::Tmp});
-        if (ui.find(root, std::string("Window/") + kContinuationName)) throw AlreadyApplied();
         expect(ui.get(window, Comp::VLayout, Prop::LgControlHeight) == 0.0, "notification layout changed");
         RectData wr = ui.rect(window);
         expect(wr.anchorMin.y == wr.anchorMax.y, "notification panel is stretched vertically");
@@ -741,6 +834,7 @@ class NotificationUnit : public Unit {
         o.name_text = read_tmp(ui, name);
         o.description_text = read_tmp(ui, description);
         o.fields_spacing = static_cast<float>(ui.get(fields, Comp::VLayout, Prop::LgSpacing));
+        o.fields = ui.rect(fields);
         for (int i = 0, n = ui.child_count(fields); i < n; ++i) {
             Handle row = ui.child(fields, i);
             for (const char *label : {"Item Field Names", "Item Field Values"}) {
@@ -798,7 +892,7 @@ class NotificationUnit : public Unit {
         if (ui.has(description, Comp::SizeFitter)) tx.set(description, Comp::SizeFitter, Prop::Enabled, 0);
 
         // FR-UI-33: fixed square picture on the right, text to its left.
-        const float gap = 30.0f;
+        const float gap = kPictureGap;
         RectData ic = o.icon;
         ic.anchorMin = ic.anchorMax = {1, 1};
         ic.pivot = {1, 1};
@@ -815,22 +909,23 @@ class NotificationUnit : public Unit {
         tp.sizeDelta.y = std::max(o.top.sizeDelta.y, o.icon.sizeDelta.y);
         tx.set_rect(top, tp);
 
-        int top_index = ui.sibling_index(top);
-        Handle continuation = tx.clone(description, window, kContinuationName);
-        tx.set_parent(continuation, window, top_index + 1);
-        tx.set(continuation, Comp::Tmp, Prop::TmpOverflowMode, kOverflowOverflow);
-        // FR-UI-34: details below the description, full width.
-        tx.set_parent(fields, window, top_index + 2);
+        // FR-UI-34: details stay beside the picture, below the name; the
+        // description starts below them. The tick keeps this up to date.
+        float y = name_bottom(s) - kInfoGap;
+        float fields_h = o.fields.sizeDelta.y;
+        tx.set_rect(fields, top_anchored(o.fields, y, fields_h));
+        y -= fields_h + kInfoGap;
 
-        tx.set_parent(description, info, 1);
-        float head_top = n.anchoredPosition.y - n.sizeDelta.y - 10.0f;
-        RectData d;
-        d.anchorMin = {0, 0};
-        d.anchorMax = {1, 1};
-        d.pivot = {0.5f, 1};
-        d.anchoredPosition = {0, head_top};
-        d.sizeDelta = {0, head_top};
-        tx.set_rect(description, d);
+        // FR-UI-33: the description flows around the picture. The picture row
+        // grows to hold all of it, so the continuation lives in the text column
+        // and reaches across the picture's width below it.
+        tx.set_parent(description, info, -1);
+        Handle probe = tx.clone(description, info, kProbeName);
+        setup_probe(tx, probe);
+        Handle continuation = tx.clone(description, info, kContinuationName);
+        tx.set(continuation, Comp::Tmp, Prop::TmpOverflowMode, kOverflowOverflow);
+        tx.set_rect(continuation, flow_rect(y, 0, picture_width()));
+        tx.set_rect(description, flow_rect(y, 0, 0));
         tx.set(description, Comp::Tmp, Prop::TmpOverflowMode, kOverflowLinked);
         tx.set_linked_text(description, continuation);
     }
@@ -839,31 +934,41 @@ class NotificationUnit : public Unit {
         if (!ui.active_in_hierarchy(root)) return;
         Handle window = ui.find(root, "Window");
         Handle header = ui.find(root, "Window/Header");
+        Handle top = ui.find(root, "Window/Top");
         Handle head = ui.find(root, "Window/Top/Item Info/Description");
-        Handle continuation = ui.find(root, std::string("Window/") + kContinuationName);
-        Handle fields = ui.find(root, "Window/Item Fields");
-        if (!window || !head || !continuation || !fields) throw Mismatch("notification structure changed at runtime");
+        Handle continuation = ui.find(root, std::string("Window/Top/Item Info/") + kContinuationName);
+        Handle probe = ui.find(root, std::string("Window/Top/Item Info/") + kProbeName);
+        Handle fields = ui.find(root, "Window/Top/Item Info/Item Fields");
+        if (!window || !top || !head || !continuation || !probe || !fields)
+            throw Mismatch("notification structure changed at runtime");
         const void *id = ui.text_identity(head, Comp::Tmp);
         if (id != last_text_ || ++frames_ >= 30) {
             last_text_ = id;
             frames_ = 0;
             const Originals &o = *orig_;
+            // FR-UI-34: details below the name, beside the picture; the
+            // description starts below them.
             float fields_h = sync_rows(ui, fields, "Item Field Names", "Item Field Values", o.fields_spacing);
-            set_height(ui, fields, fields_h);
-            // FR-UI-0d: the panel's height fits its contents (FR-UI-35); when
-            // that would take it off the screen, the description shrinks. The
-            // heading sits above the panel and has its own limit (FR-UI-31).
+            float y = name_bottom(ctx.settings.scale) - kInfoGap;
+            place_top(ui, fields, y, fields_h);
+            if (fields_h > 0.0f) y -= fields_h + kInfoGap;
+            // FR-UI-33/35: the picture row is as tall as the picture, the name
+            // and details, and the description flowing around the picture.
+            // FR-UI-0d: when that would take the panel off the screen, the
+            // description shrinks. The heading sits above the panel and has
+            // its own limit (FR-UI-31).
+            float min_top = std::max(std::max(o.top.sizeDelta.y, o.icon.sizeDelta.y), -y);
             float spacing = static_cast<float>(ui.get(window, Comp::VLayout, Prop::LgSpacing));
-            auto needed = [&](float continuation_h) {
+            auto panel_height = [&] {
+                float top_h = std::max(min_top, flow_description(ui, head, continuation, probe, y,
+                                                                 o.icon.sizeDelta.y, picture_width()));
+                set_height(ui, top, top_h);
                 float total = 0;
                 int shown = 0;
                 for (int i = 0, n = ui.child_count(window); i < n; ++i) {
                     Handle c = ui.child(window, i);
                     if (c == header) continue;
-                    float h = c == continuation ? continuation_h
-                              : c == fields     ? fields_h
-                              : ui.active_self(c) ? ui.rect_size(c).y
-                                                  : 0.0f;
+                    float h = c == top ? top_h : ui.active_self(c) ? ui.rect_size(c).y : 0.0f;
                     if (h <= 0.0f) continue;
                     total += h;
                     ++shown;
@@ -871,18 +976,31 @@ class NotificationUnit : public Unit {
                 return total + (shown > 1 ? spacing * static_cast<float>(shown - 1) : 0.0f);
             };
             float available = layout::max_panel_height(o.window.anchorMin.y, o.window.anchoredPosition.y, o.window.pivot.y);
-            fit_description(ui, head, continuation, layout::scale_tmp(o.description_text, ctx.settings.scale, false).font_size,
-                            layout::fit_floor(o.description_text), available, needed);
+            fit_description(ui, {head, continuation, probe},
+                            layout::scale_tmp(o.description_text, ctx.settings.scale, false).font_size,
+                            layout::fit_floor(o.description_text), available, panel_height);
         }
     }
 
   private:
     struct Originals {
-        RectData window, header, top, icon, name;
+        RectData window, header, top, icon, name, fields;
         TmpSize header_text, name_text, description_text;
         std::map<std::string, TmpSize> row_text;
         float fields_spacing = 0;
     };
+
+    // Bottom edge of the enlarged item name, measured from the top of the text
+    // column (the name is top-anchored, as in the game).
+    float name_bottom(double scale) const {
+        return orig_->name.anchoredPosition.y - orig_->name.sizeDelta.y * static_cast<float>(scale);
+    }
+
+    // The picture and its gap: how much wider than the text column the
+    // description is below the picture.
+    float picture_width() const { return orig_->icon.sizeDelta.x + kPictureGap; }
+    static constexpr float kPictureGap = 30.0f;
+
     std::optional<Originals> orig_;
     const void *last_text_ = nullptr;
     int frames_ = 0;

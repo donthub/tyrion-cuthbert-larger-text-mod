@@ -3,8 +3,8 @@
 
 | | |
 | --- | --- |
-| Status | Agreed draft, rev. 3: runtime injection, shrink to fit (decisions in §14) |
-| Date | 2026-11-14 |
+| Status | Agreed draft, rev. 5: runtime injection, shrink to fit, details beside the picture, description wraps around the picture (decisions in §14) |
+| Date | 2026-11-15 |
 | Source | Functionality of the existing `TyrionCuthbertLargerTextMod` project |
 | Purpose | Rebuild the mod from scratch. This document says **what** the mod must do; it does not prescribe code structure, implementation language, libraries or loader. |
 
@@ -98,13 +98,13 @@ All UI changes **shall** be scaled by the chosen *scale*. At runtime they **shal
 - **FR-UI-19** When the player opens and closes the text log, the current dialogue or narration line shall reappear as it was, both for a completed line and for one still being revealed. Playback of later lines, its timing and its events shall not change.
 
 ### 3.5 Evidence menu (Clues, Spells, People)
-- **FR-UI-20** The description text in the evidence menu shall be enlarged. The game's own automatic font shrinking shall be disabled for it. Instead, when the description, the detail fields and the *View* button together don't fit in the panel, the description shrinks until they do (FR-UI-0d).
+- **FR-UI-20** The description text in the evidence menu shall be enlarged. The game's own automatic font shrinking shall be disabled for it. Instead, when the description, wrapped around the picture, doesn't fit in the panel, it shrinks until it does (FR-UI-0d).
 - **FR-UI-21** The picture shall be on the **right**, and the item name and description on its left.
-- **FR-UI-22** The description shall start in the area to the left of the picture and continue across the **full panel width** below it. No text shall be repeated or lost at the transition, and the continuation shall be cleared when a shorter entry is shown.
+- **FR-UI-22** The description shall start in the area to the left of the picture, below the item name, detail fields and *View* button, and **wrap around the picture** like a floating picture in a document: lines that start beside the picture end at its left, and the following lines run across the **full panel width** below it. The text shall read as one block, with the same line spacing throughout and no gap or extra space where it continues below the picture. As with a floating picture, the last line beside the picture may extend a little below its lower edge, but no text shall overlap the picture. No text shall be repeated or lost at the transition, and the continuation shall be cleared when a shorter entry is shown.
 - **FR-UI-23** Both description regions shall use the same font and font size.
-- **FR-UI-24** The game shall keep supplying the localized description to its original text component. The continuation area shall only display the overflow and never be filled from any other source.
-- **FR-UI-25** The detail fields (name/value rows) and the *View* button shall follow below the description.
-- **FR-UI-26** Detail rows shall take their text's preferred height and not a fixed height. The original name/value column split shall be kept.
+- **FR-UI-24** The game shall keep supplying the localized description to its original text component. The part below the picture (the continuation) shall only display the text that doesn't fit beside it and never be filled from any other source.
+- **FR-UI-25** The detail fields (name/value rows) and the *View* button shall stay in their original place beside the picture, directly below the item name and in that order. The description shall start below them.
+- **FR-UI-26** Detail rows shall take their text's preferred height and not a fixed height, and take no height when empty. The original name/value column split shall be kept.
 - **FR-UI-27** The picture shall keep its original square size. The evidence menu's outer panel bounds shall not change.
 - **FR-UI-28** All three tabs (Clues, Spells, People) shall get this layout, because they share the same display.
 
@@ -113,9 +113,9 @@ All UI changes **shall** be scaled by the chosen *scale*. At runtime they **shal
 - **FR-UI-30** The notification panel shall be wider than the original.
 - **FR-UI-31** The heading shall be enlarged. It may shrink automatically so that long translations fit, but never below its original size, and it shall never extend above the screen.
 - **FR-UI-32** The item name, description and detail rows shall be enlarged.
-- **FR-UI-33** The picture shall be on the right, at a fixed square size. The description shall flow to its left and then continue full-width below it, as in FR-UI-22 to FR-UI-24.
-- **FR-UI-34** Detail fields shall follow below the description and use the full width. Rows shall take their preferred height, keep the original name/value split, and take **no** height when empty.
-- **FR-UI-35** The panel height shall fit its contents: the heading, the picture or text block (whichever is taller), the continuation and the populated detail rows. The panel shall stay on the screen: when its contents would take it past the screen edge, the description shrinks until they fit (FR-UI-0d).
+- **FR-UI-33** The picture shall be on the right, at a fixed square size. The description shall start to its left, below the item name and detail fields, and wrap around the picture as in FR-UI-22 to FR-UI-24, with no gap where it continues full-width below the picture.
+- **FR-UI-34** Detail fields shall stay in their original place beside the picture, directly below the item name. The description shall start below them. Rows shall take their preferred height, keep the original name/value split, and take **no** height when empty. When the item name and detail fields are taller than the picture, the picture row shall grow to fit them.
+- **FR-UI-35** The panel height shall fit its contents: the heading and the picture row, which is as tall as the picture or as the item name, detail fields and the description wrapped around the picture, whichever is taller. The panel shall stay on the screen: when its contents would take it past the screen edge, the description shrinks until they fit (FR-UI-0d).
 
 ### 3.7 Pause when unfocused
 - **FR-UI-36** The game shall not keep running while another application has focus, so inputs sent while the game is in the background can't advance dialogue or activate controls. Switching back to the game shall resume it normally.
@@ -298,8 +298,8 @@ These tests shall run in CI. They shall cover:
 ### 12.3 Manual in-game checklist
 - Dialogue, narrator and cross-examination boxes: check the layout, and that Press, Present and the arrows respond to input. At scale 2.0, check that the longest lines, names and character-info labels shrink to stay inside the box, that short lines keep the full size, and that the reveal of a shrunk line plays normally.
 - Text log: open and close it repeatedly on a completed line and during a line's reveal, for both dialogue and narration. Check that the next line plays normally.
-- Evidence menu: switch between short and long clues repeatedly, open and close the evidence page, and check Spells and People at the largest scale. Check that no text is repeated or missing where the description continues below the picture, and that the detail fields and View button work.
-- Notifications: trigger both "Obtained" and "Updated" variants with short and long text. At scale 2.0, check that a long entry stays on the screen.
+- Evidence menu: switch between short and long clues repeatedly, open and close the evidence page, and check Spells and People at the largest scale. Check that the detail fields and View button sit beside the picture under the item name and work, that the description starts below them and wraps around the picture without a gap or a change in line spacing where it continues below it, that no text overlaps the picture, and that no text is repeated or missing at that point.
+- Notifications: trigger both "Obtained" and "Updated" variants with short and long text, with and without detail fields. Check that the details sit beside the picture under the item name and that the description wraps around the picture as in the evidence menu. At scale 2.0, check that a long entry stays on the screen.
 - Story images and building plans: check that they don't overlap the dialogue or narrator box.
 - Scene changes and reloading a save: check the changes are still applied and haven't compounded.
 - Focus: switch away during dialogue, press the advance and menu inputs, then switch back. Check that dialogue hasn't advanced and that controls work again. Do this on Windows and on Proton / Steam Deck.
@@ -334,6 +334,8 @@ These questions were raised while the spec was being written and have been agree
 | D-8 | Settings | A config file, read at game start; edited directly or written by Install (FR-RT-3 … FR-RT-5, FR-INST-1). |
 | D-9 | Structure mismatch | Skip only the affected feature and log the reason; everything else keeps working (FR-RT-6, FR-GU-3). |
 | D-10 | Text that doesn't fit | Text that would leave its container at the enlarged size shrinks just enough to fit, never below the game's own size (FR-UI-0d). |
+| D-11 | Detail fields | Detail fields (and the evidence menu's *View* button) stay in their original place beside the picture, under the item name. Only the description continues below the picture (FR-UI-25, FR-UI-34). |
+| D-12 | Description around the picture | The description wraps around the picture like a floating picture: one block with even line spacing, narrower beside the picture and full width below it, with no visible split (FR-UI-22, FR-UI-33). |
 
 ---
 

@@ -58,6 +58,8 @@ enum class Prop {
     TmpPreferredHeight,  // read-only, for the current rect width
     TmpRenderedHeight,   // read-only, after a mesh update
     TmpOverflowing,      // read-only
+    TmpLineHeight,       // read-only: height of one line, incl. margins
+    TmpLinePitch,        // read-only: baseline distance of wrapped lines
     // SuperTextMesh
     StmSize,
     StmCharacterSpacing,

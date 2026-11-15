@@ -16,7 +16,7 @@ const char *comp_name(Comp c) {
 const char *prop_name(Prop p) {
     static const char *const names[] = {
         "enabled", "fontSize", "enableAutoSizing", "fontSizeMin", "fontSizeMax", "characterSpacing",
-        "overflowMode", "preferredHeight", "renderedHeight", "overflowing", "size", "characterSpacing",
+        "overflowMode", "preferredHeight", "renderedHeight", "overflowing", "lineHeight", "linePitch", "size", "characterSpacing",
         "rememberReadPosition", "reading", "currentReadTime", "totalReadTime", "bestFit", "uiLimit",
         "verticalLimitMode", "color.a", "spacing", "childAlignment", "childControlWidth",
         "childControlHeight", "childForceExpandWidth", "childForceExpandHeight", "ignoreLayout", "minWidth",

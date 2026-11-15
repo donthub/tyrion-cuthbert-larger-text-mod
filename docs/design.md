@@ -67,10 +67,23 @@ Loading sequence:
     so an STM change only loses the fitting. They are skipped when the game already
     uses a best-fit or vertical-limit mode.
   - Evidence description and popup: the per-frame tick finds the largest size at
-    which the continuation, details and View button fit the lower area (evidence
-    menu) or the panel stays on screen (popup), by bisection with
-    `ForceMeshUpdate`. It runs only when the text or width changes, plus every 30
-    frames.
+    which the description, wrapped around the picture, ends above where the
+    original description ended (evidence menu; the details and View button stay
+    beside the picture, under the name) or the panel stays on screen (popup), by
+    bisection with `ForceMeshUpdate`. It runs only when the text or width
+    changes, plus every 30 frames.
+- **Description around the picture (FR-UI-22, FR-UI-33).** TextMesh Pro can't
+  wrap one text box around a region, so the game's description component (the
+  head, beside the picture) uses linked overflow into a continuation component
+  that is full row width. Both sit in the text column on one line grid: with
+  line pitch `p` and one-line height `h`, the head holds the `n = ceil(room / p)`
+  lines that start beside the picture (height `h + (n-1)p`), and the
+  continuation starts at `n·p` below the head's top, i.e. on the next grid line
+  and never beside the picture. `p` and `h` come from
+  `TMP_Text.GetPreferredValues` with sample text ("A", and "A A" wrapped onto
+  two lines) on an invisible clone of the description (`LTM Line Probe`), so the
+  measuring never touches the displayed text and follows font changes from the
+  localization font switcher.
 - **Unattended in-game checks.** `[debug] commands = true` enables a command file
   (see the README).
 

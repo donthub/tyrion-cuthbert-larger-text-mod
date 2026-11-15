@@ -246,6 +246,25 @@ double UnityUi::get(Handle go, Comp c, Prop p) {
             bool only_visible = true;
             return unbox<Vector2>(invoke(method(k, "GetRenderedValues", 1, {"System.Boolean"}), comp, {&only_visible})).y;
         }
+        case Prop::TmpLineHeight:
+        case Prop::TmpLinePitch: {
+            // Measured with sample text at the component's current font and
+            // size. Call this on a text that isn't displayed: GetPreferredValues
+            // re-parses the given string into the component's buffers.
+            const MethodInfo *m = method(k, "GetPreferredValues", 3, {"System.String", "System.Single", "System.Single"});
+            auto pref = [&](const char *text, float width) {
+                float height = 1e6f;
+                return unbox<Vector2>(invoke(m, comp, {to_string(text), &width, &height}));
+            };
+            Vector2 one = pref("A", 1e6f);
+            if (p == Prop::TmpLineHeight) return one.y;
+            // A width between "A" and "A A" wraps the second word onto a new
+            // line of the same paragraph (no paragraph spacing).
+            float wrap = (one.x + pref("A A", 1e6f).x) / 2.0f;
+            double pitch = static_cast<double>(pref("A A", wrap).y) - one.y;
+            if (!(pitch > 0.0) || !std::isfinite(pitch)) throw Mismatch("could not measure the text line pitch");
+            return pitch;
+        }
         case Prop::TmpOverflowing: {
             bool overflowing = unbox<bool>(invoke(method(k, "get_isTextOverflowing", 0), comp));
             int32_t first = unbox<int32_t>(invoke(method(k, "get_firstOverflowCharacterIndex", 0), comp));

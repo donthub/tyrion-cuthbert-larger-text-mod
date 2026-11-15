@@ -150,6 +150,7 @@ static Node *make_menu(FakeUi &ui) {
     Node *root = ui.node("Item Menu(Clone)");
     root->comps[Comp::ItemMenu];
     Node *base = ui.path(root, "Container/Right/Container");
+    base->rect = R({0, 0}, {1, 1}, {0, 0}, {0, 0}, {0.5f, 0.5f});
     Node *top = ui.path(base, "Top");
     top->comps[Comp::HLayout][Prop::LgSpacing] = 10;
     top->comps[Comp::HLayout][Prop::LgExpandWidth] = 1;
@@ -158,11 +159,12 @@ static Node *make_menu(FakeUi &ui) {
     icon->comps[Comp::AspectFitter][Prop::AspectMode] = 2;
     icon->rect = R({0, 0}, {0, 0}, {0, 0}, {170, 0}, {0, 0.5f});
     Node *info = ui.path(top, "Item Info");
-    info->rect = R({0, 0}, {0, 0}, {0, 0}, {471.6f, 0}, {0.5f, 0.5f});
+    info->rect = R({0, 0}, {0, 0}, {0, 0}, {471.6f, 170}, {0.5f, 0.5f});  // as the row lays it out
     Node *name = ui.path(info, "Item Name");
     name->rect = R({0, 1}, {1, 1}, {0, 15}, {0, 65}, {0.5f, 1});
     tmp(ui, name, 47, true, 18, 47);
     Node *fields = ui.path(info, "Fields");
+    fields->rect = R({0, 1}, {1, 1}, {0, -90}, {0, 80}, {0.5f, 1});
     fields->comps[Comp::VLayout][Prop::LgSpacing] = 0;
     for (const char *row : {"Item Field", "Item Field (1)"}) {
         Node *r = ui.path(fields, row);
@@ -170,7 +172,9 @@ static Node *make_menu(FakeUi &ui) {
         tmp(ui, ui.path(r, "Item Field Names"), 30, true, 18, 30);
         tmp(ui, ui.path(r, "Item Field Values"), 30, true, 18, 30);
     }
-    ui.path(info, "View Button")->comps[Comp::Button];
+    Node *view = ui.path(info, "View Button");
+    view->comps[Comp::Button];
+    view->rect = R({0, 0}, {0, 0}, {100, 25}, {200, 50}, {0.5f, 0.5f});
     Node *desc = ui.path(base, "Description");
     desc->rect = R({0, 0}, {1, 0.66f}, {0, -12.5f}, {0, -25}, {0.5f, 0.5f});
     tmp(ui, desc, 24, true, 18, 24);
@@ -197,6 +201,7 @@ static Node *make_popup(FakeUi &ui) {
     name->rect = R({0, 1}, {1, 1}, {0, 0}, {0, 50}, {0.5f, 1});
     tmp(ui, name, 47, true, 18, 47);
     Node *fields = ui.path(info, "Item Fields");
+    fields->rect = R({0, 1}, {1, 1}, {0, -60}, {0, 135}, {0.5f, 1});
     fields->comps[Comp::VLayout][Prop::LgSpacing] = 0;
     for (const char *row : {"Item Field", "Item Field (1)", "Item Field (2)"}) {
         Node *r = ui.path(fields, row);
@@ -610,17 +615,24 @@ TEST(evidence_menu_layout_and_overflow) {
     Node *info = ui.path(base, "Top/Item Info");
     Node *head = ui.path(info, "Description");
     CHECK(head->parent == info);
-    CHECK(ui.sibling_index(head) == 1);
     CHECK_NEAR(head->comps[Comp::Tmp][Prop::TmpFontSize], 36);
     CHECK_NEAR(head->comps[Comp::Tmp][Prop::TmpAutoSize], 0);
     CHECK_NEAR(head->comps[Comp::Tmp][Prop::TmpOverflowMode], kOverflowLinked);
-    Node *lower = ui.path(base, "LTM Evidence Lower");
-    Node *cont = ui.path(lower, "LTM Description Continuation");
+    // The continuation and the measuring probe sit in the text column, after
+    // the description; nothing else is added below the picture row.
+    CHECK(ui.find(base, "LTM Evidence Lower") == nullptr);
+    Node *cont = ui.path(info, "LTM Description Continuation");
+    Node *probe = ui.path(info, "LTM Line Probe");
+    CHECK(cont != nullptr && probe != nullptr);
+    CHECK(cont == info->children.back());
     CHECK(head->linked == cont);
     CHECK_NEAR(cont->comps[Comp::Tmp][Prop::TmpFontSize], 36);
     CHECK_NEAR(cont->comps[Comp::Tmp][Prop::TmpOverflowMode], kOverflowOverflow);
-    CHECK(ui.path(lower, "Fields") != nullptr);
-    CHECK(ui.path(lower, "View Button") != nullptr);
+    CHECK_NEAR(probe->comps[Comp::Tmp][Prop::GraphicAlpha], 0);
+    CHECK_NEAR(probe->comps[Comp::Tmp][Prop::TmpOverflowMode], kOverflowOverflow);
+    Node *fields = ui.path(info, "Fields");
+    Node *view = ui.path(info, "View Button");
+    CHECK(fields != nullptr && view != nullptr);
     Node *top = ui.path(base, "Top");
     CHECK(top->children.back()->name == "Icon");  // picture on the right
 
@@ -634,21 +646,60 @@ TEST(evidence_menu_layout_and_overflow) {
     CHECK(cont->active);
     CHECK_NEAR(cont->rect.sizeDelta.y, 40);
     // Rows take their preferred height (30 * 1.2).
-    CHECK_NEAR(ui.path(lower, "Fields/Item Field")->rect.sizeDelta.y, 36);
-    CHECK_NEAR(ui.path(lower, "Fields")->rect.sizeDelta.y, 72);
+    CHECK_NEAR(ui.path(fields, "Item Field")->rect.sizeDelta.y, 36);
+    CHECK_NEAR(fields->rect.sizeDelta.y, 72);
+    // Stacked below the name (bottom at -50) with gaps of 10: details at -60,
+    // View (keeping its width and height) at -142, description at -202.
+    CHECK_NEAR(fields->rect.anchorMin.y, 1);
+    CHECK_NEAR(fields->rect.anchoredPosition.y, -60);
+    CHECK_NEAR(view->rect.anchorMin.y, 1);
+    CHECK_NEAR(view->rect.anchoredPosition.y, -142);
+    CHECK_NEAR(view->rect.sizeDelta.x, 200);
+    CHECK_NEAR(view->rect.sizeDelta.y, 50);
+    CHECK_NEAR(head->rect.anchoredPosition.y, -202);
     // Item info fills the space left of the picture.
     CHECK_NEAR(info->rect.sizeDelta.x, 1000 - 170 - 10);
+    // FR-UI-22: the details already reach below the picture (170), so no line
+    // runs beside it: the continuation starts right there, at the full row
+    // width (column + picture + spacing).
+    CHECK_NEAR(head->rect.sizeDelta.y, 0);
+    CHECK_NEAR(cont->rect.anchorMin.y, 1);
+    CHECK_NEAR(cont->rect.pivot.y, 1);
+    CHECK_NEAR(cont->rect.anchoredPosition.y, -202);
+    CHECK_NEAR(cont->rect.sizeDelta.x, 170 + 10);
+    CHECK_NEAR(cont->rect.anchoredPosition.x, 0);
+    CHECK_NEAR(cont->rect.pivot.x, 0);
 
-    // FR-UI-0d: a long description shrinks so the continuation, details and View
-    // button fit the lower area (305 high): 10 * size + 15 + 72 <= 305 at the
-    // most, so about 21.8, above the game's own minimum of 18.
+    // Empty details take no height; the View button and description move up.
+    for (const char *row : {"Item Field", "Item Field (1)"})
+        for (const char *label : {"Item Field Names", "Item Field Values"})
+            ui.path(fields, std::string(row) + "/" + label)->comps[Comp::Tmp][Prop::TmpFontSize] = 0;
+    head->text_version++;  // new text
+    rt.on_frame(ui);
+    CHECK_NEAR(fields->rect.sizeDelta.y, 0);
+    CHECK_NEAR(view->rect.anchoredPosition.y, -60);
+    CHECK_NEAR(head->rect.anchoredPosition.y, -120);
+    // FR-UI-22: 50 units are left beside the picture. Lines are 43.2 apart
+    // (fake: 1.2 * size), so two lines start beside it; the head holds exactly
+    // those, and the continuation starts on the next line of the same grid.
+    CHECK_NEAR(head->rect.sizeDelta.y, 43.2 + 43.2 + 0.5);
+    CHECK_NEAR(cont->rect.anchoredPosition.y, -120 - 2 * 43.2);
+
+    // FR-UI-0d: a long description shrinks so the text ends above where the
+    // original description ended: 170 (picture row) + 330 (below it) = 500
+    // from the column's top. With two lines beside the picture, that is
+    // 120 + 2 * 1.2 * size + ceil(10 * size) <= 500.5, so about 30.62, below
+    // the enlarged 36 and above the game's own minimum of 18.
     cont->text_lines = 10;
     head->comps[Comp::Button];  // new text
     rt.on_frame(ui);
     double fitted = head->comps[Comp::Tmp][Prop::TmpFontSize];
-    CHECK(fitted <= 21.8 && fitted > 21.8 - 0.5);
+    CHECK(fitted <= 30.63 && fitted > 30.62 - 0.5);
     CHECK_NEAR(cont->comps[Comp::Tmp][Prop::TmpFontSize], fitted);  // same size in both parts
+    CHECK_NEAR(probe->comps[Comp::Tmp][Prop::TmpFontSize], fitted);
     CHECK_NEAR(cont->rect.sizeDelta.y, std::ceil(10 * fitted));
+    CHECK_NEAR(cont->rect.anchoredPosition.y, -120 - 2 * 1.2 * fitted);
+    CHECK(120 + 2 * 1.2 * fitted + std::ceil(10 * fitted) <= 500.5);
     // Far too long: never below the game's own minimum.
     cont->text_lines = 40;
     head->comps[Comp::AspectFitter];
@@ -684,35 +735,61 @@ TEST(evidence_notification_layout) {
     Node *icon = ui.path(w, "Top/Icon");
     CHECK_NEAR(icon->rect.anchorMin.x, 1);
     CHECK_NEAR(icon->rect.sizeDelta.x, 270);
-    // Order: Header, Top, continuation, fields.
-    CHECK(w->children.size() == 4);
-    CHECK(w->children[2]->name == "LTM Description Continuation");
-    CHECK(w->children[3]->name == "Item Fields");
+    // Order: Header, Top. FR-UI-33/34: the details stay beside the picture,
+    // and the description, its continuation and the probe are in the text
+    // column.
+    CHECK(w->children.size() == 2);
     Node *head = ui.path(w, "Top/Item Info/Description");
     CHECK(head != nullptr);
+    Node *cont = ui.path(w, "Top/Item Info/LTM Description Continuation");
+    CHECK(cont != nullptr && cont == cont->parent->children.back());
+    CHECK(head->linked == cont);
+    CHECK(ui.path(w, "Top/Item Info/LTM Line Probe") != nullptr);
     CHECK_NEAR(head->comps[Comp::SizeFitter][Prop::Enabled], 0);
     CHECK_NEAR(head->comps[Comp::Tmp][Prop::TmpFontSize], 48);
-    CHECK_NEAR(ui.path(w, "Item Fields/Item Field/Item Field Values")->comps[Comp::Tmp][Prop::TmpFontSize], 60);
-    // Empty rows take no height; hidden rows are skipped.
-    ui.path(w, "Item Fields/Item Field (2)")->active = false;
-    ui.path(w, "Item Fields/Item Field (1)/Item Field Names")->comps[Comp::Tmp][Prop::TmpFontSize] = 0;
-    ui.path(w, "Item Fields/Item Field (1)/Item Field Values")->comps[Comp::Tmp][Prop::TmpFontSize] = 0;
+    Node *fields = ui.path(w, "Top/Item Info/Item Fields");
+    CHECK(fields != nullptr);
+    CHECK_NEAR(ui.path(fields, "Item Field/Item Field Values")->comps[Comp::Tmp][Prop::TmpFontSize], 60);
+    // Below the enlarged name (bottom at -100): three rows of 72 at -110, the
+    // description at -336. The picture row grows from 270 to fit them.
+    Node *top = ui.path(w, "Top");
     rt.on_frame(ui);
-    CHECK_NEAR(ui.path(w, "Item Fields/Item Field (1)")->rect.sizeDelta.y, 0);
-    CHECK_NEAR(ui.path(w, "Item Fields")->rect.sizeDelta.y, 72);
+    CHECK_NEAR(fields->rect.anchorMin.y, 1);
+    CHECK_NEAR(fields->rect.anchoredPosition.y, -110);
+    CHECK_NEAR(fields->rect.sizeDelta.y, 216);
+    CHECK_NEAR(head->rect.anchoredPosition.y, -336);
+    CHECK_NEAR(top->rect.sizeDelta.y, 336);
+    CHECK_NEAR(head->rect.sizeDelta.y, 0);  // no room beside the picture
+    CHECK_NEAR(cont->rect.anchoredPosition.y, -336);
+    CHECK_NEAR(cont->rect.sizeDelta.x, 270 + 30);  // across the picture's width
+    // Empty rows take no height; hidden rows are skipped. The picture row
+    // goes back to the picture's height.
+    ui.path(fields, "Item Field (2)")->active = false;
+    ui.path(fields, "Item Field (1)/Item Field Names")->comps[Comp::Tmp][Prop::TmpFontSize] = 0;
+    ui.path(fields, "Item Field (1)/Item Field Values")->comps[Comp::Tmp][Prop::TmpFontSize] = 0;
+    rt.on_frame(ui);
+    CHECK_NEAR(ui.path(fields, "Item Field (1)")->rect.sizeDelta.y, 0);
+    CHECK_NEAR(fields->rect.sizeDelta.y, 72);
+    CHECK_NEAR(head->rect.anchoredPosition.y, -192);
+    CHECK_NEAR(top->rect.sizeDelta.y, 270);
+    // 78 units beside the picture, lines 57.6 apart: two lines beside it.
+    CHECK_NEAR(head->rect.sizeDelta.y, 57.6 + 57.6 + 0.5);
+    CHECK_NEAR(cont->rect.anchoredPosition.y, -192 - 2 * 57.6);
 
-    // FR-UI-0d: the panel grows down from 82.5 % of the screen and has
-    // 891 - 14 = 877 units. With picture row 270, 72 for the details and two
-    // gaps of 25, a continuation of 12 lines fits up to size 485 / 12 = 40.4.
-    Node *cont = w->children[2];
+    // FR-UI-35/0d: the panel grows down from 82.5 % of the screen and has
+    // 891 - 14 = 877 units, all of it the picture row, which holds the text
+    // flowing around the picture: 192 + 2 * 1.2 * size + ceil(13 * size)
+    // <= 877.5 up to a size of about 44.47.
     ui.overflowing.insert(head);
-    cont->text_lines = 12;
+    cont->text_lines = 13;
     head->comps[Comp::Button];  // new text
     rt.on_frame(ui);
     CHECK(cont->active);
     double fitted = head->comps[Comp::Tmp][Prop::TmpFontSize];
-    CHECK(fitted <= 40.42 && fitted > 39.9);
+    CHECK(fitted <= 44.48 && fitted > 44.47 - 0.5);
     CHECK_NEAR(cont->comps[Comp::Tmp][Prop::TmpFontSize], fitted);
+    CHECK_NEAR(top->rect.sizeDelta.y, 192 + 2 * 1.2 * fitted + std::ceil(13 * fitted));
+    CHECK(top->rect.sizeDelta.y <= 877.5);
     // Short text keeps the enlarged size; far too long stops at the original 24.
     cont->text_lines = 2;
     head->comps[Comp::AspectFitter];
@@ -730,7 +807,7 @@ TEST(tick_errors_disable_only_the_feature) {
     Runtime rt(settings(), log);
     Node *menu = make_menu(ui);
     rt.on_instance(ui, Target::ItemMenu, menu);
-    ui.path(menu, "Container/Right/Container/LTM Evidence Lower")->name = "Gone";
+    ui.path(menu, "Container/Right/Container/Top/Item Info/LTM Description Continuation")->name = "Gone";
     rt.on_frame(ui);
     CHECK(log.has("FEATURE evidence_menu skipped: evidence menu structure changed at runtime"));
     CHECK(ui.retained.empty());

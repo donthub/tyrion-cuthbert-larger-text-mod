@@ -132,6 +132,7 @@ class FakeUi : public Ui {
         if (p == Prop::TmpOverflowing) return overflowing.count(n) ? 1 : 0;
         if (p == Prop::TmpRenderedHeight) return n->text_lines > 0 ? n->comps[c][Prop::TmpFontSize] * n->text_lines : 40;
         if (p == Prop::TmpPreferredHeight) return n->comps[c][Prop::TmpFontSize] * 1.2;
+        if (p == Prop::TmpLineHeight || p == Prop::TmpLinePitch) return n->comps[c][Prop::TmpFontSize] * 1.2;
         auto &props = n->comps[c];
         auto it = props.find(p);
         return it == props.end() ? 0.0 : it->second;
