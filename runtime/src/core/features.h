@@ -18,8 +18,8 @@ namespace ltm {
 struct AlreadyApplied {};
 
 // Which game controller announced a new UI instance.
-enum class Target { DialogueBox, TextLog, ItemMenu, Notification, ImageDisplay, SettingsMenu };
-constexpr int kTargetCount = 6;
+enum class Target { DialogueBox, TextLog, ItemMenu, Notification, ImageDisplay, SettingsMenu, SaveMenu };
+constexpr int kTargetCount = 7;
 
 // State shared between units.
 struct Shared {
@@ -74,5 +74,19 @@ std::vector<std::unique_ptr<Unit>> make_units();
 // Helpers shared with tests.
 layout::TmpSize read_tmp(Ui &ui, Handle go);
 void write_tmp(Tx &tx, Handle go, const layout::TmpSize &size);
+
+// A save slot's date and time, to the minute.
+struct SaveDate {
+    int year = 0, month = 0, day = 0, hour = 0, minute = 0;
+    // Orders dates chronologically.
+    long long key() const;
+};
+// Reads a slot date as the game shows it ("H:mm - M/d/yyyy") or as the mod
+// shows it ("YYYY-MM-DD HH:mm"). Nothing for any other text.
+std::optional<SaveDate> parse_save_date(const std::string &text);
+// "YYYY-MM-DD HH:mm".
+std::string format_save_date(const SaveDate &date);
+// "Save #N", plus an italic, gold "(latest)" for the most recent save.
+std::string save_slot_label(int number, bool latest);
 
 }  // namespace ltm

@@ -11,9 +11,9 @@
 
 namespace ltm {
 
-const char *const kFeatureKeys[7] = {
+const char *const kFeatureKeys[8] = {
     "dialogue_box", "cross_examination", "story_images", "text_log",
-    "evidence_menu", "evidence_notification", "pause_when_unfocused",
+    "evidence_menu", "evidence_notification", "pause_when_unfocused", "save_menu",
 };
 
 Settings::Settings() {

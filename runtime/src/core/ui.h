@@ -54,6 +54,9 @@ enum class Comp {
     SetActiveOnPlatforms,
     CustomSettingDropdown,
     Dropdown,        // TMPro.TMP_Dropdown
+    // The game's Save/Load menu (namespace VisualNovel) and its slot buttons.
+    SaveMenu,
+    SaveMenuButton,
     Count
 };
 
@@ -109,6 +112,9 @@ enum class Prop {
     // TMP_Dropdown
     DropdownValue,     // selected index; writing it doesn't fire the change event
     DropdownExpanded,  // read-only: the option list is open
+    // SaveMenuButton (read-only fields)
+    SaveEmpty,         // is_empty: the slot holds no save
+    SaveIndex,         // saveIndex: the slot's index
     Count
 };
 

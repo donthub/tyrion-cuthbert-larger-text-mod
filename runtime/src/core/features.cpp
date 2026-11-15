@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <map>
 
@@ -1277,6 +1278,177 @@ class SettingsTabUnit : public Unit {
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// Save/Load menu: ISO dates and the "(latest)" marker
+
+long long SaveDate::key() const {
+    return ((((static_cast<long long>(year) * 13 + month) * 32 + day) * 24 + hour) * 60) + minute;
+}
+
+namespace {
+
+bool valid_date(const SaveDate &d) {
+    return d.year >= 1 && d.year <= 9999 && d.month >= 1 && d.month <= 12 && d.day >= 1 && d.day <= 31 &&
+           d.hour >= 0 && d.hour <= 23 && d.minute >= 0 && d.minute <= 59;
+}
+
+// Whether the rest of `text` from `pos` is blank.
+bool blank_from(const std::string &text, int pos) {
+    for (size_t i = static_cast<size_t>(pos); i < text.size(); ++i)
+        if (!std::isspace(static_cast<unsigned char>(text[i]))) return false;
+    return true;
+}
+
+}  // namespace
+
+std::optional<SaveDate> parse_save_date(const std::string &text) {
+    SaveDate d;
+    int end = -1;
+    // The game: "1:03 - 11/7/2026".
+    if (std::sscanf(text.c_str(), " %2d:%2d - %2d/%2d/%4d%n", &d.hour, &d.minute, &d.month, &d.day, &d.year, &end) == 5 &&
+        end > 0 && blank_from(text, end) && valid_date(d))
+        return d;
+    // The mod: "2026-11-07 01:03".
+    d = SaveDate{};
+    end = -1;
+    if (std::sscanf(text.c_str(), " %4d-%2d-%2d %2d:%2d%n", &d.year, &d.month, &d.day, &d.hour, &d.minute, &end) == 5 &&
+        end > 0 && blank_from(text, end) && valid_date(d))
+        return d;
+    return std::nullopt;
+}
+
+std::string format_save_date(const SaveDate &d) {
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%04d-%02d-%02d %02d:%02d", d.year, d.month, d.day, d.hour, d.minute);
+    return buf;
+}
+
+std::string save_slot_label(int number, bool latest) {
+    std::string label = "Save #" + std::to_string(number);
+    if (latest) label += " <i><color=#E8B04A>(latest)</color></i>";
+    return label;
+}
+
+namespace {
+
+const char *const kSaveContent = "Container/Viewport/Content";
+const char *const kSaveName = "Container/File Name";
+const char *const kSaveDate = "Container/Date";
+
+// The slot number in the game's label ("Save #3" -> 3), or 0.
+int slot_number(const std::string &label) {
+    size_t hash = label.rfind('#');
+    if (hash == std::string::npos) return 0;
+    int n = 0;
+    size_t i = hash + 1;
+    for (; i < label.size() && std::isdigit(static_cast<unsigned char>(label[i])) && n < 100000; ++i) n = n * 10 + (label[i] - '0');
+    return i > hash + 1 ? n : 0;
+}
+
+class SaveMenuUnit : public Unit {
+  public:
+    SaveMenuUnit() : Unit("save_menu", "save_menu", Target::SaveMenu) {}
+
+    bool matches(Ui &ui, Handle root) override { return ui.has(root, Comp::SaveMenu); }
+
+    // The slot buttons (the template included) hold a name and a date text.
+    void validate(Ui &ui, Handle root) override {
+        Handle content = need(ui, root, kSaveContent);
+        bool found = false;
+        for (int i = 0; i < ui.child_count(content); ++i) {
+            Handle button = ui.child(content, i);
+            if (!ui.has(button, Comp::SaveMenuButton)) continue;
+            need(ui, button, kSaveName, {Comp::Tmp});
+            need(ui, button, kSaveDate, {Comp::Tmp});
+            found = true;
+        }
+        expect(found, "the Save/Load menu has no slot button");
+    }
+
+    // Nothing structural: the texts are kept up to date by the tick.
+    void apply(Tx &tx, Handle root, const Context &ctx) override { (void)tx, (void)root, (void)ctx; }
+
+    bool wants_tick() const override { return true; }
+
+    // Runs before every layout pass while the menu exists, so the game's own
+    // texts are never drawn. Texts are rebuilt from what the game assigned,
+    // never from the mod's own output (FR-UI-0b).
+    void tick(Ui &ui, Handle root, const Context &ctx) override {
+        (void)ctx;
+        if (!ui.active_in_hierarchy(root)) return;
+        Handle content = need(ui, root, kSaveContent);
+        struct Shown {
+            Slot *slot;
+            Handle name, date;
+        };
+        std::vector<Shown> shown;
+        for (int i = 0; i < ui.child_count(content); ++i) {
+            Handle button = ui.child(content, i);
+            if (!ui.active_self(button) || !ui.has(button, Comp::SaveMenuButton)) continue;
+            int id = ui.instance_id(button);
+            if (ui.get(button, Comp::SaveMenuButton, Prop::SaveEmpty) != 0.0) {
+                slots_.erase(id);  // the game shows its own empty slot
+                continue;
+            }
+            Slot &slot = slots_[id];
+            Handle name = need(ui, button, kSaveName, {Comp::Tmp});
+            Handle date = need(ui, button, kSaveDate, {Comp::Tmp});
+            if (read(ui, name, slot.name)) {
+                int n = slot_number(ui.text(name, Comp::Tmp));
+                slot.number = n > 0 ? n : static_cast<int>(ui.get(button, Comp::SaveMenuButton, Prop::SaveIndex)) + 1;
+            }
+            if (read(ui, date, slot.date)) slot.when = parse_save_date(ui.text(date, Comp::Tmp));
+            shown.push_back({&slot, name, date});
+        }
+        const Slot *latest = nullptr;
+        for (const Shown &s : shown) {
+            const Slot *c = s.slot;
+            if (!c->when) continue;
+            if (!latest || c->when->key() > latest->when->key() ||
+                (c->when->key() == latest->when->key() && c->number > latest->number))
+                latest = c;
+        }
+        for (const Shown &s : shown) {
+            write(ui, s.name, s.slot->name, save_slot_label(s.slot->number, s.slot == latest));
+            if (s.slot->when) write(ui, s.date, s.slot->date, format_save_date(*s.slot->when));
+        }
+    }
+
+  private:
+    // One text of a slot: what the mod wrote, and whether it is still shown.
+    struct Text {
+        const void *identity = nullptr;
+        std::string written;
+        bool ours = false;
+    };
+    struct Slot {
+        Text name, date;
+        int number = 0;
+        std::optional<SaveDate> when;
+    };
+
+    // True when the game assigned a new text (to be read again).
+    static bool read(Ui &ui, Handle go, Text &t) {
+        const void *identity = ui.text_identity(go, Comp::Tmp);
+        if (identity && identity == t.identity) return false;
+        t.identity = identity;
+        t.ours = !t.written.empty() && ui.text(go, Comp::Tmp) == t.written;
+        return !t.ours;
+    }
+
+    static void write(Ui &ui, Handle go, Text &t, const std::string &value) {
+        if (t.ours && t.written == value) return;
+        ui.set_text(go, value);
+        t.written = value;
+        t.ours = true;
+        t.identity = ui.text_identity(go, Comp::Tmp);
+    }
+
+    std::map<int, Slot> slots_;  // by button instance id
+};
+
+}  // namespace
+
 std::vector<std::unique_ptr<Unit>> make_units() {
     std::vector<std::unique_ptr<Unit>> units;
     units.push_back(std::make_unique<DialogueBoxUnit>("dialogue_box", "dialogue_box", BoxKind::Dialogue));
@@ -1292,6 +1464,7 @@ std::vector<std::unique_ptr<Unit>> make_units() {
     units.push_back(std::make_unique<EvidenceMenuUnit>());
     units.push_back(std::make_unique<NotificationUnit>());
     units.push_back(std::make_unique<SettingsTabUnit>());
+    units.push_back(std::make_unique<SaveMenuUnit>());
     return units;
 }
 

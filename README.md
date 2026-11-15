@@ -8,6 +8,7 @@ Makes the game's text easier to read on small screens such as the Steam Deck:
 - **Text log:** larger, wider, normal letter spacing. The current line no longer disappears when you close the log.
 - **Evidence menu (Clues, Spells, People):** larger description. The picture is on the right, with the same padding on its left and below it as between it and the panel edge. The details and View button stay beside it under the item name. When there are details, the description starts below the picture at full width; otherwise it starts below the name and wraps around the picture: lines beside it are narrower, and the text runs on at full width below it, without a gap.
 - **"Obtained / updated evidence" popup:** wider and larger, with the same picture-and-description layout: details beside the picture, and the description below the picture or, without details, wrapping around it.
+- **Save/Load menu:** dates are shown as `YYYY-MM-DD HH:mm` (24-hour), and the most recently saved slot is named *Save #N (latest)*, with "(latest)" in gold italics.
 - **Pause when unfocused:** the game no longer reacts to input while another window has focus.
 - **In-game settings:** a *Mod* tab in the game's Settings menu, after *Workshop*, to change the mod's settings.
 
@@ -72,6 +73,7 @@ text_log = true               ; text log size/width and the line-restore fix
 evidence_menu = true          ; Clues / Spells / People
 evidence_notification = true  ; "Obtained evidence!" / "Evidence updated!"
 pause_when_unfocused = true   ; ignore input while the game is in the background
+save_menu = true              ; Save/Load menu: ISO dates, "(latest)" marker
 ```
 
 Invalid or missing values fall back to their defaults (with a warning in the log). A broken config never stops the game from starting. Set `debug = true` under `[general]` for a more detailed log.

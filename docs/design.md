@@ -50,6 +50,18 @@ Loading sequence:
     `UIBase.AnimatedGUIObject.Awake` (the latter for the "Add Item Popup").
   - `Courtroom.AddItemDisplay.YarnAddItem` / `YarnUpdateItem`.
   - `VisualNovel.ImageDisplay.SetImage` and `UIBase.GUIObject.Show`.
+  - `VisualNovel.SaveMenu.LoadMenu` (the "Save Menu" prefab). Not its `Awake`: that
+    body is folded with many other classes' `Awake` and is reached by unrelated objects.
+- **Save/Load menu (FR-UI-47 … FR-UI-50).** Each slot is a `VisualNovel.SaveMenuButton`
+  (`Courtroom.CourtSaveMenuButton` in this build) below `Container/Viewport/Content`, with
+  the TMP texts `Container/File Name` (the game writes `Save #N`) and `Container/Date`
+  (the game writes `H:mm - M/d/yyyy`, independent of the system locale; the template's
+  placeholder is `12/12/2024 - 24:59`). The per-frame tick reads `is_empty`, parses the
+  date text the game assigned (never the save data), marks the newest slot (same minute:
+  the higher number) and writes both texts. A text is re-read only when its
+  `TMP_Text.text` object changes, so the mod's own output is never parsed again and
+  saving, overwriting or deleting while the menu is open moves the marker. A date in an
+  unknown format is left as the game shows it and its slot can't be the latest.
 - **Text log line restore (FR-UI-19).** Super Text Mesh's `rememberReadPosition`
   (the original mod's fix) has no effect in this build. While the log is open, the
   dialogue text is rebuilt and a fully revealed line is drawn unrevealed. The
@@ -184,6 +196,7 @@ text_log = true
 evidence_menu = true
 evidence_notification = true
 pause_when_unfocused = true
+save_menu = true
 ```
 
 Missing, malformed or out-of-range values fall back to the default and are logged

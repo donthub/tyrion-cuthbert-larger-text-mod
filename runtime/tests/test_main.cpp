@@ -1168,11 +1168,13 @@ TEST(settings_tab_added_after_workshop_once) {
     auto tabs = ui.settings_tabs(menu);
     CHECK(tabs.size() == 3 && tabs.back() == "LTM Mod");
 
-    // The template: header, five rows of two, the note; every setting navigable.
+    // The template: header, six rows of two (the last one with one), the note;
+    // every setting navigable.
     Node *tmpl = ui.N(ui.settings_tab_prefab(menu, "LTM Mod"));
     CHECK(ui.find(tmpl, "Tab Header") && ui.N(ui.find(tmpl, "Tab Header"))->text == "Mod");
     CHECK(!ui.N(ui.find(tmpl, "Tab Header"))->comps.count(Comp::LocalizedText));
-    CHECK(ui.child_count(tmpl) == 7);
+    CHECK(ui.child_count(tmpl) == 8);
+    CHECK(ui.child_count(ui.find(tmpl, "LTM Row 6")) == 1 && ui.find(tmpl, "LTM Row 6/LTM save_menu"));
     CHECK(ui.find(tmpl, "LTM Note") != nullptr);
     CHECK(ui.tab_options[tmpl].size() == mod_controls().size());
     CHECK(ui.find(tmpl, "LTM Row 1/LTM enabled") && ui.find(tmpl, "LTM Row 5/LTM pause_when_unfocused"));
@@ -1287,6 +1289,170 @@ TEST(settings_tab_rolls_back_on_failure) {
     CHECK(ui.find(buttons, "LTM Mod") == nullptr);
     CHECK(ui.child_count(ui.holder()) == 0);
     CHECK(ui.settings_tabs(menu).size() == 2);
+}
+
+// --- Save/Load menu --------------------------------------------------------------
+
+// The game's "Save Menu" prefab: slot buttons below Container/Viewport/Content.
+// `dates` empty = an empty slot.
+static Node *make_save_menu(FakeUi &ui, const std::vector<std::string> &dates) {
+    Node *menu = ui.node("Save Menu");
+    ui.add(menu, Comp::SaveMenu);
+    Node *content = ui.path(menu, "Container/Viewport/Content");
+    Node *tmpl = ui.node("Save Menu Button Template", content);
+    tmpl->active = false;
+    ui.add(tmpl, Comp::SaveMenuButton);
+    ui.add(ui.path(tmpl, "Container/File Name"), Comp::Tmp);
+    ui.add(ui.path(tmpl, "Container/Date"), Comp::Tmp);
+    for (size_t i = 0; i < dates.size(); ++i) {
+        Node *b = ui.copy(tmpl, content);
+        b->name = "Save Menu Button Template(Clone)";
+        b->active = true;
+        ui.prop(b, Comp::SaveMenuButton, Prop::SaveIndex) = static_cast<double>(i);
+        ui.prop(b, Comp::SaveMenuButton, Prop::SaveEmpty) = dates[i].empty() ? 1 : 0;
+        ui.N(ui.find(b, "Container/File Name"))->text = "Save #" + std::to_string(i + 1);
+        ui.N(ui.find(b, "Container/Date"))->text = dates[i].empty() ? "12/12/2024 - 24:59" : dates[i];
+    }
+    return menu;
+}
+
+static Node *save_text(FakeUi &ui, Node *menu, int slot, const char *which) {
+    Node *content = ui.N(ui.find(menu, "Container/Viewport/Content"));
+    return ui.N(ui.find(content->children.at(static_cast<size_t>(slot) + 1), std::string("Container/") + which));
+}
+
+// What the game does when it shows a save in a slot (SetSaveDisplay).
+static void game_shows_save(FakeUi &ui, Node *menu, int slot, const std::string &date) {
+    Node *content = ui.N(ui.find(menu, "Container/Viewport/Content"));
+    Node *b = content->children.at(static_cast<size_t>(slot) + 1);
+    ui.prop(b, Comp::SaveMenuButton, Prop::SaveEmpty) = date.empty() ? 1 : 0;
+    Node *name = save_text(ui, menu, slot, "File Name");
+    Node *when = save_text(ui, menu, slot, "Date");
+    name->text = "Save #" + std::to_string(slot + 1);
+    when->text = date.empty() ? "12/12/2024 - 24:59" : date;
+    ++name->text_version;
+    ++when->text_version;
+}
+
+TEST(save_date_parse_and_format) {
+    auto d = parse_save_date("1:03 - 11/7/2026");
+    CHECK(d && d->year == 2026 && d->month == 11 && d->day == 7 && d->hour == 1 && d->minute == 3);
+    CHECK(d && format_save_date(*d) == "2026-11-07 01:03");
+    auto e = parse_save_date("23:59 - 2/29/2028");
+    CHECK(e && format_save_date(*e) == "2028-02-29 23:59");
+    auto f = parse_save_date("0:00 - 1/1/2027");
+    CHECK(f && format_save_date(*f) == "2027-01-01 00:00");
+    // The mod's own output reads back the same (no compounding).
+    auto g = parse_save_date("2026-10-28 07:46");
+    CHECK(g && format_save_date(*g) == "2026-10-28 07:46");
+    CHECK(!parse_save_date("12/12/2024 - 24:59"));  // the template's placeholder
+    CHECK(!parse_save_date("1:03 - 13/7/2026"));
+    CHECK(!parse_save_date("1:03 PM - 11/7/2026"));
+    CHECK(!parse_save_date("1:03 - 11/7/2026 extra"));
+    CHECK(!parse_save_date(""));
+    CHECK(f && e && d && f->key() > d->key() && e->key() > f->key());
+    CHECK(save_slot_label(1, false) == "Save #1");
+    CHECK(save_slot_label(12, true) == "Save #12 <i><color=#E8B04A>(latest)</color></i>");
+}
+
+TEST(save_menu_dates_and_latest_marker) {
+    FakeUi ui;
+    MemLog log;
+    Runtime rt(settings(), log);
+    Node *menu = make_save_menu(ui, {"1:03 - 11/7/2026", "7:46 - 10/28/2026", "", "22:29 - 11/9/2026"});
+    rt.on_instance(ui, Target::SaveMenu, menu);
+    CHECK(log.has("FEATURE save_menu applied"));
+    rt.on_frame(ui);
+    CHECK(save_text(ui, menu, 0, "File Name")->text == "Save #1");
+    CHECK(save_text(ui, menu, 0, "Date")->text == "2026-11-07 01:03");
+    CHECK(save_text(ui, menu, 1, "Date")->text == "2026-10-28 07:46");
+    CHECK(save_text(ui, menu, 3, "File Name")->text == save_slot_label(4, true));
+    CHECK(save_text(ui, menu, 3, "Date")->text == "2026-11-09 22:29");
+    // The empty slot and the template keep the game's texts.
+    CHECK(save_text(ui, menu, 2, "Date")->text == "12/12/2024 - 24:59");
+    CHECK(save_text(ui, menu, -1, "File Name")->text == "Text");
+
+    // More frames change nothing (FR-UI-0b).
+    rt.on_frame(ui);
+    rt.on_frame(ui);
+    CHECK(save_text(ui, menu, 3, "File Name")->text == save_slot_label(4, true));
+    CHECK(save_text(ui, menu, 0, "Date")->text == "2026-11-07 01:03");
+
+    // A new save in the empty slot takes the marker.
+    game_shows_save(ui, menu, 2, "9:15 - 11/15/2026");
+    rt.on_frame(ui);
+    CHECK(save_text(ui, menu, 2, "File Name")->text == save_slot_label(3, true));
+    CHECK(save_text(ui, menu, 2, "Date")->text == "2026-11-15 09:15");
+    CHECK(save_text(ui, menu, 3, "File Name")->text == "Save #4");
+
+    // Deleting it gives the marker back.
+    game_shows_save(ui, menu, 2, "");
+    rt.on_frame(ui);
+    CHECK(save_text(ui, menu, 3, "File Name")->text == save_slot_label(4, true));
+
+    // Overwriting a slot: the game rewrites both texts.
+    game_shows_save(ui, menu, 1, "8:00 - 12/1/2026");
+    rt.on_frame(ui);
+    CHECK(save_text(ui, menu, 1, "File Name")->text == save_slot_label(2, true));
+    CHECK(save_text(ui, menu, 1, "Date")->text == "2026-12-01 08:00");
+    CHECK(save_text(ui, menu, 3, "File Name")->text == "Save #4");
+    CHECK(log.count("FEATURE save_menu") == 1);
+}
+
+TEST(save_menu_ties_and_unreadable_dates) {
+    FakeUi ui;
+    MemLog log;
+    Runtime rt(settings(), log);
+    Node *menu = make_save_menu(ui, {"10:00 - 3/1/2027", "10:00 - 3/1/2027", "noon on Tuesday"});
+    rt.on_instance(ui, Target::SaveMenu, menu);
+    rt.on_frame(ui);
+    // Same minute: the higher slot number wins. An unreadable date stays as it is.
+    CHECK(save_text(ui, menu, 0, "File Name")->text == "Save #1");
+    CHECK(save_text(ui, menu, 1, "File Name")->text == save_slot_label(2, true));
+    CHECK(save_text(ui, menu, 2, "File Name")->text == "Save #3");
+    CHECK(save_text(ui, menu, 2, "Date")->text == "noon on Tuesday");
+
+    // No saves: no marker; a closed menu is left alone.
+    Node *empty = make_save_menu(ui, {"", ""});
+    rt.on_instance(ui, Target::SaveMenu, empty);
+    rt.on_frame(ui);
+    CHECK(save_text(ui, empty, 0, "Date")->text == "12/12/2024 - 24:59");
+    Node *closed = make_save_menu(ui, {"1:03 - 11/7/2026"});
+    closed->active = false;
+    rt.on_instance(ui, Target::SaveMenu, closed);
+    rt.on_frame(ui);
+    CHECK(save_text(ui, closed, 0, "Date")->text == "1:03 - 11/7/2026");
+    closed->active = true;
+    rt.on_frame(ui);
+    CHECK(save_text(ui, closed, 0, "Date")->text == "2026-11-07 01:03");
+    CHECK(save_text(ui, closed, 0, "File Name")->text == save_slot_label(1, true));
+}
+
+TEST(save_menu_switch_and_mismatch) {
+    {
+        FakeUi ui;
+        MemLog log;
+        Settings s = settings();
+        s.features["save_menu"] = false;
+        Runtime rt(s, log);
+        Node *menu = make_save_menu(ui, {"1:03 - 11/7/2026"});
+        rt.on_instance(ui, Target::SaveMenu, menu);
+        rt.on_frame(ui);
+        CHECK(save_text(ui, menu, 0, "Date")->text == "1:03 - 11/7/2026");
+        CHECK(save_text(ui, menu, 0, "File Name")->text == "Save #1");
+    }
+    {
+        FakeUi ui;
+        MemLog log;
+        Runtime rt(settings(), log);
+        Node *menu = make_save_menu(ui, {"1:03 - 11/7/2026"});
+        Node *content = ui.N(ui.find(menu, "Container/Viewport/Content"));
+        for (Node *b : content->children) ui.N(ui.find(b, "Container/Date"))->comps.erase(Comp::Tmp);
+        rt.on_instance(ui, Target::SaveMenu, menu);
+        CHECK(log.has("FEATURE save_menu skipped: 'Container/Date' has no TMP_Text"));
+        rt.on_frame(ui);
+        CHECK(save_text(ui, menu, 0, "File Name")->text == "Save #1");
+    }
 }
 
 int main() {

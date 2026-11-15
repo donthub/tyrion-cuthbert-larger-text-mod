@@ -287,8 +287,20 @@ Comp comp_of(Target t) {
         case Target::Notification: return Comp::AddItemDisplay;
         case Target::ImageDisplay: return Comp::ImageDisplay;
         case Target::SettingsMenu: return Comp::SettingsMenu;
+        case Target::SaveMenu: return Comp::SaveMenu;
     }
     return Comp::Count;
+}
+
+// The detours of the Ret shapes pass a pointer-sized result through; the others
+// return nothing, so they may only replace methods that return void.
+bool returns_as_shaped(const MethodInfo *m, Shape shape) {
+    const il2cpp::Type *t = il2cpp::il2cpp_method_get_return_type(m);
+    char *name = t ? il2cpp::il2cpp_type_get_name(t) : nullptr;
+    bool is_void = name && std::string(name) == "System.Void";
+    if (name) il2cpp::il2cpp_free(name);
+    bool ret = shape == Shape::InstanceRet0 || shape == Shape::InstanceRetStr2 || shape == Shape::InstanceRetStr3;
+    return ret ? (t && !is_void) : is_void;
 }
 
 // `self` is a component on the instance's root object. Folded method bodies or
@@ -296,6 +308,8 @@ Comp comp_of(Target t) {
 Handler announce(Target target) {
     return [target](Object *self) {
         if (!self) return;
+        // A folded body can be reached with objects that are no components at all.
+        if (!engine::is_a(self, g_classes->Component)) return;
         g_log.write(Level::Debug, "hook: " + engine::class_name(self) + " -> target " + std::to_string(static_cast<int>(target)));
         Handle go = g_ui->game_object_of(self);
         if (!go || !g_ui->has(go, comp_of(target))) return;
@@ -648,6 +662,10 @@ const HookSpec kHooks[] = {
     // Before Awake: Awake reopens the tab shown last (SettingsMenu.lastTab), which
     // may be the mod's tab, so it must already be registered.
     {Target::SettingsMenu, "UIBase", "SettingsMenu", "Awake", 0, Shape::Instance0, true},
+    // Not Awake: its body is shared with many other classes' Awake (identical
+    // code folding), so a hook there runs for unrelated objects at start-up.
+    // LoadMenu fills the slots each time the menu opens.
+    {Target::SaveMenu, "VisualNovel", "SaveMenu", "LoadMenu", 1, Shape::InstanceStr1, false},
 };
 
 // SettingsMenu.lastTab is static: the tab shown last in this session, reopened
@@ -783,6 +801,11 @@ void install(bool all) {
             g_log.write(Level::Warn, "hook " + where + ": not found");
             continue;
         }
+        if (!returns_as_shaped(m, h.shape)) {
+            reasons[t] = where + " has an unexpected return type";
+            g_log.write(Level::Warn, "hook " + where + ": unexpected return type");
+            continue;
+        }
         std::string error;
         if (hook(m, h.shape, h.prefix, announce(h.target), error)) {
             hooked[t] = true;
@@ -819,6 +842,7 @@ void install(bool all) {
         g_runtime->target_unavailable(Target::ItemMenu, "frame hook unavailable");
         g_runtime->target_unavailable(Target::Notification, "frame hook unavailable");
         g_runtime->target_unavailable(Target::SettingsMenu, "frame hook unavailable");
+        g_runtime->target_unavailable(Target::SaveMenu, "frame hook unavailable");
         g_runtime->global_failed("pause_when_unfocused", "frame hook unavailable");
     }
 }

@@ -40,10 +40,12 @@ const ClassName kCompClasses[] = {
     {"UIBase", "SetActiveOnPlatforms"},
     {"UIBase", "CustomSettingDropdown"},
     {"TMPro", "TMP_Dropdown"},
+    {"VisualNovel", "SaveMenu"},
+    {"VisualNovel", "SaveMenuButton"},
 };
 static_assert(sizeof(kCompClasses) / sizeof(kCompClasses[0]) == static_cast<size_t>(Comp::Count), "classes");
 
-// Field* kinds are SuperTextMesh fields (it has no properties for them).
+// Field* kinds are fields (SuperTextMesh and game scripts have no properties for them).
 enum class Kind { Float, Bool, Int, Field, FieldBool, FieldInt, Special };
 
 struct Accessor {
@@ -88,6 +90,8 @@ Accessor accessor(Prop p) {
         case Prop::AspectMode: return {"get_aspectMode", "set_aspectMode", Kind::Int};
         case Prop::DropdownValue: return {"get_value", "SetValueWithoutNotify", Kind::Int};
         case Prop::DropdownExpanded: return {"get_IsExpanded", nullptr, Kind::Bool};
+        case Prop::SaveEmpty: return {"is_empty", nullptr, Kind::FieldBool};
+        case Prop::SaveIndex: return {"saveIndex", nullptr, Kind::FieldInt};
         default: return {nullptr, nullptr, Kind::Special};
     }
 }

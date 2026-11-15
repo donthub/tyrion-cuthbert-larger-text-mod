@@ -10,7 +10,8 @@ const char *comp_name(Comp c) {
                                         "ContentSizeFitter", "AspectRatioFitter", "Button", "DialogueBox",
                                         "TestimonyPrompt", "TextLogGUI", "ItemMenu", "AddItemDisplay", "ImageDisplay",
                                         "SettingsMenu", "SettingsTab", "LoadTabOnSelect", "LocalizedText",
-                                        "SetActiveOnPlatforms", "CustomSettingDropdown", "TMP_Dropdown"};
+                                        "SetActiveOnPlatforms", "CustomSettingDropdown", "TMP_Dropdown", "SaveMenu",
+                                        "SaveMenuButton"};
     static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(Comp::Count), "component names");
     return names[static_cast<size_t>(c)];
 }
@@ -23,7 +24,7 @@ const char *prop_name(Prop p) {
         "verticalLimitMode", "color.a", "spacing", "childAlignment", "childControlWidth",
         "childControlHeight", "childForceExpandWidth", "childForceExpandHeight", "ignoreLayout", "minWidth",
         "minHeight", "preferredWidth", "preferredHeight", "flexibleWidth", "flexibleHeight", "horizontalFit",
-        "verticalFit", "aspectMode", "value", "IsExpanded"};
+        "verticalFit", "aspectMode", "value", "IsExpanded", "is_empty", "saveIndex"};
     static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(Prop::Count), "property names");
     return names[static_cast<size_t>(p)];
 }

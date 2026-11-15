@@ -130,6 +130,12 @@ All UI changes **shall** be scaled by the chosen *scale*. At runtime they **shal
 - **FR-UI-45** The tab shall not read or change the game's own settings, and shall not change the game's other tabs.
 - **FR-UI-46** The tab shall be available when the master switch is off, so the mod can be switched back on in the game (FR-RT-10). It shall follow FR-RT-6 and FR-RT-7: if the menu is not as expected, no button or tab is added and the reason is logged.
 
+### 3.8a Save/Load menu
+- **FR-UI-47** Every used slot's date and time shall be shown as `YYYY-MM-DD HH:mm` (24-hour clock, the time the game shows), whatever the system locale.
+- **FR-UI-48** Every used slot shall be named `Save #N`, where N is its slot number. The most recently saved slot shall be named `Save #N (latest)`, with "(latest)" in italics and in an accent colour (gold, `#E8B04A`). Exactly one slot carries the marker while any slot is used; with two saves in the same minute, the higher slot number wins.
+- **FR-UI-49** The marker and dates shall follow saving, overwriting and deleting while the menu is open, in both the Save and the Load variant of the menu. Empty slots keep the game's look.
+- **FR-UI-50** The dates shall be taken from what the menu displays, not from save files (FR-UI-40). A date the mod can't read is left as the game shows it.
+
 ### 3.9 Preserved behaviour
 - **FR-UI-38** Dialogue choices and unrelated menus shall keep their existing text size and layout.
 - **FR-UI-39** All changed elements shall keep their localization, controllers, layout fitters, images, and button and event references.

@@ -18,6 +18,7 @@ const std::vector<ModControl> &mod_controls() {
         {"evidence_menu", "Evidence Menu"},
         {"evidence_notification", "Evidence Popup"},
         {"pause_when_unfocused", "Pause in Background"},
+        {"save_menu", "Save Menu"},
     };
     return controls;
 }
