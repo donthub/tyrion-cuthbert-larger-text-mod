@@ -1334,7 +1334,6 @@ namespace {
 const char *const kSaveContent = "Container/Viewport/Content";
 const char *const kSaveName = "Container/File Name";
 const char *const kSaveDate = "Container/Date";
-
 // The slot number in the game's label ("Save #3" -> 3), or 0.
 int slot_number(const std::string &label) {
     size_t hash = label.rfind('#');
@@ -1448,6 +1447,99 @@ class SaveMenuUnit : public Unit {
 };
 
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// Gold border on the selection (FR-UI-52)
+
+namespace {
+
+const char *const kFrame = "LTM Selection Frame";
+// The gold of the Save/Load "(latest)" marker (#E8B04A).
+const Rgba kFrameColor{232 / 255.0f, 176 / 255.0f, 74 / 255.0f, 1.0f};
+// Covers the light outer edge the game draws into these buttons' images (2 px
+// on the sliced save slot; 1 px on the evidence cell and the popup buttons,
+// widened to stay visible), in canvas units.
+const float kFrameWidth = 2.0f;
+
+// A gold frame over `target`'s border: four edges stretched along its sides,
+// drawn above its other children. They don't take clicks, and the game's
+// colour tint or sprite swap (the button's own image only) doesn't reach them.
+Handle make_frame(Ui &ui, Handle target) {
+    Handle frame = ui.create(kFrame, target);
+    RectData full;
+    full.anchorMin = {0, 0};
+    full.anchorMax = {1, 1};
+    full.pivot = {0.5f, 0.5f};
+    ui.set_rect(frame, full);
+    const float w = kFrameWidth;
+    struct Edge {
+        const char *name;
+        Vec2 anchor_min, anchor_max, pivot, size;
+    };
+    const Edge edges[] = {{"Top", {0, 1}, {1, 1}, {0.5f, 1}, {0, w}},
+                          {"Bottom", {0, 0}, {1, 0}, {0.5f, 0}, {0, w}},
+                          {"Left", {0, 0}, {0, 1}, {0, 0.5f}, {w, 0}},
+                          {"Right", {1, 0}, {1, 1}, {1, 0.5f}, {w, 0}}};
+    for (const Edge &e : edges) {
+        Handle edge = ui.create(e.name, frame);
+        RectData r;
+        r.anchorMin = e.anchor_min;
+        r.anchorMax = e.anchor_max;
+        r.pivot = e.pivot;
+        r.sizeDelta = e.size;
+        ui.set_rect(edge, r);
+        ui.add(edge, Comp::RawImage);  // no texture: a plain rectangle
+        ui.set_color(edge, Comp::RawImage, kFrameColor);
+        ui.set(edge, Comp::RawImage, Prop::GraphicRaycastTarget, 0);
+    }
+    return frame;
+}
+
+bool inside(Ui &ui, Handle go, Comp c) {
+    for (Handle h = go; h; h = ui.parent(h))
+        if (ui.has(h, c)) return true;
+    return false;
+}
+
+}  // namespace
+
+Handle SelectionBorder::target(Ui &ui, Handle selected) {
+    // A Save/Load slot, also while one of its Save/Load/Delete buttons is selected.
+    for (Handle h = selected; h; h = ui.parent(h))
+        if (ui.has(h, Comp::SaveMenuButton)) return h;
+    if (!ui.has(selected, Comp::Button)) return nullptr;
+    // An evidence item: a button in the item grid (not a tab or the close button).
+    Handle list = ui.parent(selected);
+    if (list && ui.name(list) == "Content" && inside(ui, list, Comp::ItemMenu)) return selected;
+    // A confirmation popup's OK or Cancel button.
+    if (inside(ui, selected, Comp::GuiConfirm)) return selected;
+    return nullptr;
+}
+
+void SelectionBorder::update(Ui &ui) {
+    Handle selected = ui.selected();
+    int id = selected ? ui.instance_id(selected) : 0;
+    if (id == selected_id_ && (!framed_ || ui.alive(framed_))) return;
+    selected_id_ = id;
+    Handle next = selected ? target(ui, selected) : nullptr;
+    if (framed_ && next && ui.instance_id(framed_) == ui.instance_id(next)) return;
+    clear(ui);
+    if (!next) return;
+    Handle frame = ui.find(next, kFrame);
+    if (!frame) frame = make_frame(ui, next);
+    if (!ui.active_self(frame)) ui.set_active(frame, true);
+    ui.retain(next);
+    framed_ = next;
+}
+
+void SelectionBorder::clear(Ui &ui) {
+    if (!framed_) return;
+    Handle old = framed_;
+    framed_ = nullptr;
+    if (ui.alive(old))
+        if (Handle frame = ui.find(old, kFrame)) ui.set_active(frame, false);
+    ui.release(old);
+}
 
 std::vector<std::unique_ptr<Unit>> make_units() {
     std::vector<std::unique_ptr<Unit>> units;

@@ -42,6 +42,7 @@ const ClassName kCompClasses[] = {
     {"TMPro", "TMP_Dropdown"},
     {"VisualNovel", "SaveMenu"},
     {"VisualNovel", "SaveMenuButton"},
+    {"UIBase", "GUIConfirm"},
 };
 static_assert(sizeof(kCompClasses) / sizeof(kCompClasses[0]) == static_cast<size_t>(Comp::Count), "classes");
 
@@ -72,6 +73,7 @@ Accessor accessor(Prop p) {
         case Prop::StmBestFit: return {"bestFit", "bestFit", Kind::FieldInt};
         case Prop::StmUiLimit: return {"uiLimit", "uiLimit", Kind::FieldBool};
         case Prop::StmVerticalLimitMode: return {"verticalLimitMode", nullptr, Kind::FieldInt};
+        case Prop::GraphicRaycastTarget: return {"get_raycastTarget", "set_raycastTarget", Kind::Bool};
         case Prop::LgSpacing: return {"get_spacing", "set_spacing", Kind::Float};
         case Prop::LgChildAlignment: return {"get_childAlignment", "set_childAlignment", Kind::Int};
         case Prop::LgControlWidth: return {"get_childControlWidth", "set_childControlWidth", Kind::Bool};
@@ -364,6 +366,23 @@ void UnityUi::set(Handle go, Comp c, Prop p, double value) {
         }
         default: throw EngineError(std::string("cannot write ") + prop_name(p));
     }
+}
+
+void UnityUi::set_color(Handle go, Comp c, const Rgba &rgba) {
+    Object *comp = component(go, c);
+    Color color{rgba.r, rgba.g, rgba.b, rgba.a};
+    invoke(method(il2cpp_object_get_class(comp), "set_color", 1), comp, {&color});
+}
+
+Handle UnityUi::selected() {
+    if (!event_system_) {
+        event_system_ = find_class("UnityEngine.EventSystems", "EventSystem");
+        if (!event_system_) throw EngineError("class UnityEngine.EventSystems.EventSystem is unavailable");
+    }
+    Object *system = invoke(method(event_system_, "get_current", 0), nullptr);
+    if (!system) return nullptr;
+    Object *go = invoke(method(event_system_, "get_currentSelectedGameObject", 0), system);
+    return go && alive(go) ? pin(go) : nullptr;
 }
 
 // --- rect transforms ---------------------------------------------------------------

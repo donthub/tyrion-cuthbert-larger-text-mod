@@ -47,6 +47,8 @@ class UnityUi : public Ui {
     void remove(Handle go, Comp c) override;
     double get(Handle go, Comp c, Prop p) override;
     void set(Handle go, Comp c, Prop p, double value) override;
+    void set_color(Handle go, Comp c, const Rgba &color) override;
+    Handle selected() override;
 
     RectData rect(Handle go) override;
     void set_rect(Handle go, const RectData &r) override;
@@ -126,6 +128,7 @@ class UnityUi : public Ui {
     Object *holder_ = nullptr;
     il2cpp::GCHandle holder_handle_ = 0;
     NavClasses nav_;
+    Class *event_system_ = nullptr;
 };
 
 }  // namespace ltm::engine

@@ -983,6 +983,7 @@ void install(bool all) {
         g_runtime->target_unavailable(Target::SettingsMenu, "frame hook unavailable");
         g_runtime->target_unavailable(Target::SaveMenu, "frame hook unavailable");
         g_runtime->global_failed("pause_when_unfocused", "frame hook unavailable");
+        g_runtime->global_failed(kSelectionBorder, "frame hook unavailable");
     }
 }
 

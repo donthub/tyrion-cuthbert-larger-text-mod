@@ -4,6 +4,8 @@
 
 namespace ltm {
 
+const char *const kSelectionBorder = "selection_border";
+
 const char *comp_name(Comp c) {
     static const char *const names[] = {"TMP_Text", "SuperTextMesh", "RawImage", "Graphic",
                                         "HorizontalLayoutGroup", "VerticalLayoutGroup", "LayoutElement",
@@ -11,7 +13,7 @@ const char *comp_name(Comp c) {
                                         "TestimonyPrompt", "TextLogGUI", "ItemMenu", "AddItemDisplay", "ImageDisplay",
                                         "SettingsMenu", "SettingsTab", "LoadTabOnSelect", "LocalizedText",
                                         "SetActiveOnPlatforms", "CustomSettingDropdown", "TMP_Dropdown", "SaveMenu",
-                                        "SaveMenuButton"};
+                                        "SaveMenuButton", "GUIConfirm"};
     static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(Comp::Count), "component names");
     return names[static_cast<size_t>(c)];
 }
@@ -21,7 +23,7 @@ const char *prop_name(Prop p) {
         "enabled", "fontSize", "enableAutoSizing", "fontSizeMin", "fontSizeMax", "characterSpacing",
         "overflowMode", "preferredHeight", "renderedHeight", "overflowing", "lineHeight", "linePitch", "size", "characterSpacing",
         "rememberReadPosition", "reading", "currentReadTime", "totalReadTime", "bestFit", "uiLimit",
-        "verticalLimitMode", "color.a", "spacing", "childAlignment", "childControlWidth",
+        "verticalLimitMode", "color.a", "raycastTarget", "spacing", "childAlignment", "childControlWidth",
         "childControlHeight", "childForceExpandWidth", "childForceExpandHeight", "ignoreLayout", "minWidth",
         "minHeight", "preferredWidth", "preferredHeight", "flexibleWidth", "flexibleHeight", "horizontalFit",
         "verticalFit", "aspectMode", "value", "IsExpanded", "is_empty", "saveIndex"};
@@ -47,6 +49,10 @@ Runtime::Runtime(const Settings &settings, Log &log, std::vector<std::unique_ptr
     Slot navigation;
     navigation.key = navigation.config_key = "gamepad_navigation";
     slots_.push_back(std::move(navigation));
+    // The gold border on the selection (FR-UI-52), kept up to date every frame.
+    Slot border;
+    border.key = border.config_key = kSelectionBorder;
+    slots_.push_back(std::move(border));
     for (Slot &slot : slots_) {
         if (slot.unit && slot.unit->always_on()) continue;
         if (!settings_.enabled || !settings_.feature(slot.config_key)) slot.state = UnitState::Disabled;
@@ -179,6 +185,18 @@ void Runtime::on_frame(Ui &ui) {
         }
     }
     if (shared_.text_log_closed_frames > 0) --shared_.text_log_closed_frames;
+    if (global_enabled(kSelectionBorder)) {
+        try {
+            selection_border_.update(ui);
+            global_applied(kSelectionBorder);
+        } catch (const std::exception &e) {
+            global_failed(kSelectionBorder, e.what());
+            try {
+                selection_border_.clear(ui);
+            } catch (...) {
+            }
+        }
+    }
 }
 
 void Runtime::target_unavailable(Target target, const std::string &reason) {
@@ -218,6 +236,7 @@ std::vector<UnitStatus> Runtime::statuses() const {
 }
 
 bool Runtime::wants_frames() const {
+    if (global_enabled(kSelectionBorder)) return true;
     for (const Slot &s : slots_)
         if (!s.tracked.empty()) return true;
     return false;

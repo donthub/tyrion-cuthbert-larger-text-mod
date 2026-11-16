@@ -950,7 +950,9 @@ TEST(tick_errors_disable_only_the_feature) {
 TEST(destroyed_instances_are_released) {
     FakeUi ui;
     MemLog log;
-    Runtime rt(settings(), log);
+    Settings st = settings();
+    st.features["selection_border"] = false;  // it wants every frame
+    Runtime rt(st, log);
     Node *menu = make_menu(ui);
     rt.on_instance(ui, Target::ItemMenu, menu);
     CHECK(rt.wants_frames());
@@ -1180,12 +1182,13 @@ TEST(settings_tab_added_after_workshop_once) {
     auto tabs = ui.settings_tabs(menu);
     CHECK(tabs.size() == 3 && tabs.back() == "LTM Mod");
 
-    // The template: header, six rows of two, the note;
+    // The template: header, seven rows of two (the last one alone), the note;
     // every setting navigable.
     Node *tmpl = ui.N(ui.settings_tab_prefab(menu, "LTM Mod"));
     CHECK(ui.find(tmpl, "Tab Header") && ui.N(ui.find(tmpl, "Tab Header"))->text == "Mod");
     CHECK(!ui.N(ui.find(tmpl, "Tab Header"))->comps.count(Comp::LocalizedText));
-    CHECK(ui.child_count(tmpl) == 8);
+    CHECK(ui.child_count(tmpl) == 9);
+    CHECK(ui.child_count(ui.find(tmpl, "LTM Row 7")) == 1 && ui.find(tmpl, "LTM Row 7/LTM selection_border"));
     CHECK(ui.child_count(ui.find(tmpl, "LTM Row 6")) == 2 && ui.find(tmpl, "LTM Row 6/LTM save_menu"));
     Node *navigation = ui.N(ui.find(tmpl, "LTM Row 6/LTM gamepad_navigation"));
     CHECK(navigation && ui.N(ui.find(navigation, "Title"))->text == "Navigation");
@@ -1411,6 +1414,107 @@ TEST(save_menu_dates_and_latest_marker) {
     CHECK(save_text(ui, menu, 1, "Date")->text == "2026-12-01 08:00");
     CHECK(save_text(ui, menu, 3, "File Name")->text == "Save #4");
     CHECK(log.count("FEATURE save_menu") == 1);
+}
+
+// --- Selection border ------------------------------------------------------------
+
+TEST(selection_border_follows_the_selection) {
+    FakeUi ui;
+    MemLog log;
+    Runtime rt(settings(), log);
+    CHECK(rt.wants_frames());
+    auto frame = [&](Node *n) { return ui.N(ui.find(n, "LTM Selection Frame")); };
+    auto shown = [&](Node *n) { return frame(n) && frame(n)->active; };
+
+    // Save/Load slots, the evidence grid and a confirmation popup.
+    Node *menu = make_save_menu(ui, {"1:03 - 11/7/2026", ""});
+    Node *content = ui.N(ui.find(menu, "Container/Viewport/Content"));
+    Node *slot0 = content->children.at(1), *slot1 = content->children.at(2);
+    Node *items = ui.node("Item Menu");
+    ui.add(items, Comp::ItemMenu);
+    Node *grid = ui.path(items, "Container/Left/Scroll View/Viewport/Content");
+    Node *item = ui.node("Button Template(Clone)", grid);
+    ui.add(item, Comp::Button);
+    Node *tab = ui.path(items, "Tabs/Clues");
+    ui.add(tab, Comp::Button);
+    Node *popup = ui.node("GUI CancelConfirm");
+    ui.add(popup, Comp::GuiConfirm);
+    Node *ok = ui.path(popup, "Window/OK"), *cancel = ui.path(popup, "Window/Cancel");
+    ui.add(ok, Comp::Button);
+    ui.add(cancel, Comp::Button);
+
+    // Nothing selected: nothing drawn.
+    rt.on_frame(ui);
+    CHECK(!frame(slot0) && !frame(item) && !frame(ok));
+
+    ui.selection = slot1;  // an empty slot
+    rt.on_frame(ui);
+    CHECK(log.has("FEATURE selection_border applied"));
+    CHECK(shown(slot1) && !frame(slot0));
+    Node *f = frame(slot1);
+    CHECK(f->children.size() == 4 && slot1->children.back() == f);
+    Node *top = ui.N(ui.find(f, "Top"));
+    CHECK(top && ui.has(top, Comp::RawImage) && ui.prop(top, Comp::RawImage, Prop::GraphicRaycastTarget) == 0);
+    CHECK(ui.colors.count(top) && ui.colors[top].r > 0.9f && ui.colors[top].b < 0.3f);
+    CHECK(top->rect.anchorMin.y == 1 && top->rect.anchorMax.x == 1 && top->rect.sizeDelta.y == 2);
+    CHECK(ui.retained.count(slot1));
+
+    // A slot's own buttons keep the slot bordered.
+    ui.selection = ui.path(slot0, "Container/Buttons/Load");
+    ui.add(ui.selection, Comp::Button);
+    rt.on_frame(ui);
+    CHECK(shown(slot0) && !shown(slot1) && !ui.retained.count(slot1));
+
+    ui.selection = item;
+    rt.on_frame(ui);
+    CHECK(shown(item) && !shown(slot0));
+
+    // Evidence tabs and other buttons get none.
+    ui.selection = tab;
+    rt.on_frame(ui);
+    CHECK(!frame(tab) && !shown(item));
+
+    ui.selection = ok;
+    rt.on_frame(ui);
+    CHECK(shown(ok) && !frame(cancel));
+    ui.selection = cancel;
+    rt.on_frame(ui);
+    CHECK(shown(cancel) && !shown(ok));
+
+    // Back to a bordered object: its frame is reused, never duplicated.
+    ui.selection = ok;
+    rt.on_frame(ui);
+    rt.on_frame(ui);
+    int frames = 0;
+    for (Node *c : ok->children) frames += c->name == "LTM Selection Frame";
+    CHECK(frames == 1 && shown(ok) && !shown(cancel));
+
+    // The popup closing (destroyed) with its button still selected.
+    ui.destroy(popup);
+    ok->destroyed = true;
+    ui.selection = nullptr;
+    rt.on_frame(ui);
+    CHECK(ui.retained.empty());
+    CHECK(log.count("FEATURE selection_border") == 1);
+}
+
+TEST(selection_border_switched_off) {
+    FakeUi ui;
+    MemLog log;
+    Settings off = settings();
+    off.features["selection_border"] = false;
+    Runtime rt(off, log);
+    CHECK(!rt.wants_frames());
+    CHECK(log.count("selection_border") == 0);
+    rt.report_disabled();
+    CHECK(log.has("FEATURE selection_border disabled"));
+    Node *popup = ui.node("GUI Prompt");
+    ui.add(popup, Comp::GuiConfirm);
+    Node *ok = ui.path(popup, "Window/OK");
+    ui.add(ok, Comp::Button);
+    ui.selection = ok;
+    rt.on_frame(ui);
+    CHECK(!ui.find(ok, "LTM Selection Frame"));
 }
 
 TEST(save_menu_ties_and_unreadable_dates) {

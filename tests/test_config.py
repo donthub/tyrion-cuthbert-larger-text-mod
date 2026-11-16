@@ -47,6 +47,7 @@ class ParseConfigTests(unittest.TestCase):
         self.assertTrue(settings["features"]["pause_when_unfocused"])
         self.assertTrue(settings["features"]["save_menu"])
         self.assertTrue(settings["features"]["gamepad_navigation"])
+        self.assertTrue(settings["features"]["selection_border"])
 
     def test_boundaries_are_inclusive(self):
         settings, warnings = ltm.parse_config("[general]\nscale = 2.0\nopacity = 0\n")

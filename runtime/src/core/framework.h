@@ -14,6 +14,9 @@ namespace ltm {
 
 enum class Level { Debug, Info, Warn, Error };
 
+// The config key of the selection border (a global, not a unit).
+extern const char *const kSelectionBorder;
+
 class Log {
   public:
     virtual ~Log() = default;
@@ -77,6 +80,7 @@ class Runtime {
     Log &log_;
     Shared shared_;
     std::vector<Slot> slots_;
+    SelectionBorder selection_border_;
     bool text_log_open_ = false;
 };
 

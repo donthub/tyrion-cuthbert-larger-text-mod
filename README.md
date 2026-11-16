@@ -76,6 +76,7 @@ evidence_notification = true  ; "Obtained evidence!" / "Evidence updated!"
 pause_when_unfocused = true   ; ignore input while the game is in the background
 save_menu = true              ; Save/Load menu: ISO dates, "(latest)" marker
 gamepad_navigation = true     ; controller navigation fixes (Navigation in the Mod tab)
+selection_border = true       ; gold border on the selection (Selection Border in the Mod tab)
 ```
 
 Invalid or missing values fall back to their defaults (with a warning in the log). A broken config never stops the game from starting. Set `debug = true` under `[general]` for a more detailed log.

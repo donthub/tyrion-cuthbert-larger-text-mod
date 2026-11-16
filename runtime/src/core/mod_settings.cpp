@@ -20,6 +20,7 @@ const std::vector<ModControl> &mod_controls() {
         {"pause_when_unfocused", "Pause in Background"},
         {"save_menu", "Save Menu"},
         {"gamepad_navigation", "Navigation"},
+        {"selection_border", "Selection Border"},
     };
     return controls;
 }

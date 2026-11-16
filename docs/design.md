@@ -88,6 +88,18 @@ Loading sequence:
   `TMP_Text.text` object changes, so the mod's own output is never parsed again and
   saving, overwriting or deleting while the menu is open moves the marker. A date in an
   unknown format is left as the game shows it and its slot can't be the latest.
+- **Selection border (FR-UI-52).** The borders are drawn into the buttons' images:
+  the save slot's sliced `Save Button` sprite (a 2 px light outer edge at 100 px per
+  unit), the evidence cell's `Item Cell` and the popup buttons' `Menu Button Deselect`
+  (1 px each). The game marks the selection only with the `Button`'s colour tint or
+  sprite swap of that image. A global (`selection_border`, not a unit, like the
+  navigation) runs in the frame tick: when `EventSystem.current.currentSelectedGameObject`
+  changes, the target is the `SaveMenuButton` at or above it, an item button whose parent
+  is `Content` inside a `Courtroom.ItemMenu`, or a button inside a `UIBase.GUIConfirm`
+  ("GUI Prompt", "GUI CancelConfirm"). The target gets a child `LTM Selection Frame`,
+  created once and found again by name: four gold (`#E8B04A`) `RawImage` edges, 2 units
+  wide, stretched along its sides, drawn last and not raycast targets. The previous
+  target's frame is hidden. The target is retained while framed.
 - **Text log line restore (FR-UI-19).** Super Text Mesh's `rememberReadPosition`
   (the original mod's fix) has no effect in this build. While the log is open, the
   dialogue text is rebuilt and a fully revealed line is drawn unrevealed. The
@@ -152,9 +164,9 @@ Loading sequence:
     The copy is made below an inactive `DontDestroyOnLoad` holder (`LTM Holder`),
     so its scripts first run when it is moved into the menu;
   - builds a tab prefab once per session from the Gameplay tab below the same
-    holder (`LTM Mod Tab`: header, six `Double Dropdown` rows, a note) and
+    holder (`LTM Mod Tab`: header, seven `Double Dropdown` rows, a note) and
     registers it in a grown `tabs` array (`System.Array` methods, so element
-    writes go through the runtime). `SettingsTab.allSettings` lists the twelve items;
+    writes go through the runtime). `SettingsTab.allSettings` lists the thirteen items;
   - keeps the game's `CustomSettingDropdown` on each item (it opens the list and
     does the navigation) but skips its `Start`, `ResetSelectedOption` and
     `OnDropdownOption(int)` for objects named `LTM …` (hooks that don't call the
@@ -224,6 +236,7 @@ evidence_notification = true
 pause_when_unfocused = true
 save_menu = true
 gamepad_navigation = true
+selection_border = true
 ```
 
 Missing, malformed or out-of-range values fall back to the default and are logged

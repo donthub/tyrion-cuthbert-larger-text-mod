@@ -146,6 +146,13 @@ class FakeUi : public Ui {
         ++sets;
         n->comps[c][p] = v;
     }
+    void set_color(Handle go, Comp c, const Rgba &color) override {
+        if (!N(go)->comps.count(c)) throw EngineError("no component");
+        colors[N(go)] = color;
+    }
+    std::map<Node *, Rgba> colors;
+    Handle selected() override { return selection; }
+    Node *selection = nullptr;  // the EventSystem's selected object
     RectData rect(Handle go) override { return N(go)->rect; }
     void set_rect(Handle go, const RectData &r) override { N(go)->rect = r; }
     Vec2 rect_size(Handle go) override {

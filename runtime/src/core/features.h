@@ -68,6 +68,23 @@ class Unit {
     Target target_;
 };
 
+// The selected Save/Load slot, evidence item or popup button gets a gold
+// border (FR-UI-52). Not a unit: it follows the EventSystem's selection, in
+// whichever menu that is.
+class SelectionBorder {
+  public:
+    // Once per frame: moves the border to the current selection.
+    void update(Ui &ui);
+    // Hides the border and lets go of the bordered object.
+    void clear(Ui &ui);
+    // What gets the border when `selected` is selected; nullptr for nothing.
+    static Handle target(Ui &ui, Handle selected);
+
+  private:
+    int selected_id_ = 0;      // the selection last seen
+    Handle framed_ = nullptr;  // retained while framed
+};
+
 // Creates every unit, in application order.
 std::vector<std::unique_ptr<Unit>> make_units();
 

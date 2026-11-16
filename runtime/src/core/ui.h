@@ -24,6 +24,11 @@ struct Bounds {
     float x_min = 0, y_min = 0, x_max = 0, y_max = 0;
 };
 
+// A colour, each channel 0..1.
+struct Rgba {
+    float r = 1, g = 1, b = 1, a = 1;
+};
+
 // An opaque GameObject reference. nullptr means "none".
 using Handle = void *;
 
@@ -57,6 +62,7 @@ enum class Comp {
     // The game's Save/Load menu (namespace VisualNovel) and its slot buttons.
     SaveMenu,
     SaveMenuButton,
+    GuiConfirm,      // UIBase.GUIConfirm: the confirmation popups
     Count
 };
 
@@ -89,6 +95,7 @@ enum class Prop {
     StmVerticalLimitMode,  // read-only, enum SuperTextMesh.VerticalLimitMode
     // Graphic
     GraphicAlpha,
+    GraphicRaycastTarget,
     // HorizontalOrVerticalLayoutGroup
     LgSpacing,
     LgChildAlignment,
@@ -166,6 +173,11 @@ class Ui {
     virtual void remove(Handle go, Comp c) = 0;
     virtual double get(Handle go, Comp c, Prop p) = 0;
     virtual void set(Handle go, Comp c, Prop p, double value) = 0;
+    // Graphic.color of component `c` (a Graphic).
+    virtual void set_color(Handle go, Comp c, const Rgba &color) = 0;
+    // The object the EventSystem has selected (controller and keyboard focus),
+    // nullptr when none.
+    virtual Handle selected() = 0;
 
     // RectTransform.
     virtual RectData rect(Handle go) = 0;
