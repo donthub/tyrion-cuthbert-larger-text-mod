@@ -18,6 +18,7 @@
 #include "../../third_party/minhook/include/MinHook.h"
 #include "../core/config.h"
 #include "../core/framework.h"
+#include "../core/navigation.h"
 #include "il2cpp_api.h"
 #include "unity.h"
 #include "unity_ui.h"
@@ -116,11 +117,13 @@ void guarded(F &&f) {
 // --- hooks --------------------------------------------------------------------
 
 // Detour shapes, by managed signature. IL2CPP passes the MethodInfo last.
-enum class Shape { Instance0, InstanceStr1, InstanceRet0, InstanceRetStr2, InstanceRetStr3, Static0, InstanceInt1 };
+enum class Shape { Instance0, InstanceStr1, InstanceRet0, InstanceRetStr2, InstanceRetStr3, Static0, InstanceInt1, InstanceRetFilter0 };
 
 using Handler = std::function<void(Object *self)>;
 // Returns true to skip the original method (and the other handlers) for `self`.
 using Skip = std::function<bool(Object *self)>;
+// Replaces a method's result (InstanceRetFilter0 only).
+using Filter = std::function<Object *(Object *self, Object *result)>;
 
 struct Slot {
     void *target = nullptr;
@@ -128,9 +131,10 @@ struct Slot {
     Shape shape = Shape::Instance0;
     std::vector<Handler> prefix, postfix;
     std::vector<Skip> skip;
+    std::vector<Filter> filters;
 };
 
-constexpr int kSlots = 16;
+constexpr int kSlots = 24;
 std::array<Slot, kSlots> g_slots;
 int g_slot_count = 0;
 
@@ -220,6 +224,16 @@ void d_static0(const MethodInfo *mi) {
     reinterpret_cast<void (*)(const MethodInfo *)>(s.original)(mi);
     run(s.postfix, nullptr);
 }
+template <int N>
+Object *d_instance_ret_filter0(Object *self, const MethodInfo *mi) {
+    Slot &s = g_slots[N];
+    Object *r = reinterpret_cast<Object *(*)(Object *, const MethodInfo *)>(s.original)(self, mi);
+    for (auto &f : s.filters) {
+        Object *in = r;
+        guarded([&] { r = f(self, in); });
+    }
+    return r;
+}
 template <int... I>
 void *detour_for(Shape shape, int n, std::integer_sequence<int, I...>) {
     static void *const tables[][kSlots] = {
@@ -230,6 +244,7 @@ void *detour_for(Shape shape, int n, std::integer_sequence<int, I...>) {
         {reinterpret_cast<void *>(&d_instance_ret_str3<I>)...},
         {reinterpret_cast<void *>(&d_static0<I>)...},
         {reinterpret_cast<void *>(&d_instance_int1<I>)...},
+        {reinterpret_cast<void *>(&d_instance_ret_filter0<I>)...},
     };
     return tables[static_cast<int>(shape)][n];
 }
@@ -238,7 +253,8 @@ void *detour_for(Shape shape, int n, std::integer_sequence<int, I...>) {
 // original; a skip check can suppress the original for some objects (only
 // Instance0 and InstanceInt1 hooks check it). Methods that the compiler folded
 // into one body share a slot.
-bool hook(const MethodInfo *m, Shape shape, bool prefix, Handler handler, std::string &error, Skip skip = nullptr) {
+bool hook(const MethodInfo *m, Shape shape, bool prefix, Handler handler, std::string &error, Skip skip = nullptr,
+          Filter filter = nullptr) {
     void *target = engine::method_pointer(m);
     if (!target) {
         error = "method has no code";
@@ -253,6 +269,7 @@ bool hook(const MethodInfo *m, Shape shape, bool prefix, Handler handler, std::s
         }
         if (handler) (prefix ? s.prefix : s.postfix).push_back(std::move(handler));
         if (skip) s.skip.push_back(std::move(skip));
+        if (filter) s.filters.push_back(std::move(filter));
         return true;
     }
     if (g_slot_count == kSlots) {
@@ -265,6 +282,7 @@ bool hook(const MethodInfo *m, Shape shape, bool prefix, Handler handler, std::s
     s.shape = shape;
     if (handler) (prefix ? s.prefix : s.postfix).push_back(std::move(handler));
     if (skip) s.skip.push_back(std::move(skip));
+    if (filter) s.filters.push_back(std::move(filter));
     void *detour = detour_for(shape, n, std::make_integer_sequence<int, kSlots>{});
     MH_STATUS st = MH_CreateHook(target, detour, &s.original);
     if (st == MH_OK) st = MH_EnableHook(target);
@@ -299,7 +317,8 @@ bool returns_as_shaped(const MethodInfo *m, Shape shape) {
     char *name = t ? il2cpp::il2cpp_type_get_name(t) : nullptr;
     bool is_void = name && std::string(name) == "System.Void";
     if (name) il2cpp::il2cpp_free(name);
-    bool ret = shape == Shape::InstanceRet0 || shape == Shape::InstanceRetStr2 || shape == Shape::InstanceRetStr3;
+    bool ret = shape == Shape::InstanceRet0 || shape == Shape::InstanceRetStr2 || shape == Shape::InstanceRetStr3 ||
+               shape == Shape::InstanceRetFilter0;
     return ret ? (t && !is_void) : is_void;
 }
 
@@ -737,6 +756,125 @@ bool install_skips(std::string &reason) {
     return true;
 }
 
+// --- directional navigation (FR-UI-51) -----------------------------------------------
+// Unity's automatic navigation (Selectable.FindSelectable) considers every
+// selectable in the scene; with wrap-around it takes the one farthest away in
+// the opposite direction, wherever it is. From an open menu that can be a
+// button behind it, off screen or hidden, so the highlight disappears. This
+// happens in the unmodded game too. Unity's pick is kept when it is in the same menu
+// and visible; otherwise the same search runs over those only, and with none
+// the selection stays.
+
+const char *const kNavigation = "gamepad_navigation";
+
+std::string nav_name(Object *selectable) {
+    Handle go = selectable ? g_ui->game_object_of(selectable) : nullptr;
+    return go ? "'" + g_ui->name(go) + "'" : "nothing";
+}
+
+Object *navigate(Object *self, Object *result, nav::Dir dir) {
+    if (!self || !g_runtime->global_enabled(kNavigation)) return result;
+    try {
+        if ((dir == nav::Dir::Up || dir == nav::Dir::Down) && g_ui->inside(self, Comp::SaveMenu)) {
+            // The Save/Load slots: the next slot up or down, wrapping as in the
+            // game, but empty slots included (the game makes them unreachable
+            // in the Load menu). They stay unclickable where the game says so.
+            if (Object *slot = g_ui->save_slot_neighbour(self, dir == nav::Dir::Down)) return slot;
+            return result;
+        }
+        // The evidence items: a grid that wraps within each row and column.
+        if (g_ui->inside(self, Comp::ItemMenu)) {
+            if (Object *item = g_ui->grid_neighbour(self, dir)) return item;
+        }
+        if (!result) return result;
+        Handle canvas = g_ui->root_canvas(self);
+        if (!canvas) return result;
+        nav::Item me;
+        try {
+            me = g_ui->nav_item(self, canvas);
+        } catch (const Mismatch &) {
+            return result;  // not a UI object: Unity's choice
+        }
+        if (!nav::corrects(me)) return result;
+        Bounds screen = g_ui->bounds_in(canvas, canvas);
+        try {
+            if (nav::valid(me, g_ui->nav_item(result, canvas), screen)) return result;
+        } catch (const Mismatch &) {
+        }
+        std::vector<nav::Item> items;
+        std::vector<Object *> objects;
+        for (Object *o : g_ui->all_selectables()) {
+            try {
+                items.push_back(g_ui->nav_item(o, canvas));
+                objects.push_back(o);
+            } catch (const Mismatch &) {
+            }
+        }
+        int i = nav::pick(me, dir, items, screen);
+        Object *chosen = i >= 0 ? objects[static_cast<size_t>(i)] : nullptr;
+        static const char *const names[] = {"left", "right", "up", "down"};
+        g_log.write(Level::Debug, "navigation: " + std::string(names[static_cast<int>(dir)]) + " from " + nav_name(self) +
+                                      ": " + nav_name(result) + " is outside the menu or the view, " +
+                                      (chosen ? "selecting " + nav_name(chosen) : std::string("staying")));
+        return chosen;
+    } catch (const std::exception &e) {
+        g_runtime->global_failed(kNavigation, e.what());
+        return result;
+    }
+}
+
+// Hooks Selectable.FindSelectableOn{Left,Right,Up,Down}, which Selectable.OnMove
+// calls; Scrollbar and Slider override them and call these.
+void install_navigation() {
+    if (!g_runtime->global_enabled(kNavigation)) return;
+    Class *k = engine::find_class("UnityEngine.UI", "Selectable");
+    if (!k) {
+        g_runtime->global_failed(kNavigation, "Selectable not found");
+        return;
+    }
+    struct Spec {
+        const char *name;
+        nav::Dir dir;
+    };
+    const Spec specs[] = {{"FindSelectableOnLeft", nav::Dir::Left},
+                          {"FindSelectableOnRight", nav::Dir::Right},
+                          {"FindSelectableOnUp", nav::Dir::Up},
+                          {"FindSelectableOnDown", nav::Dir::Down}};
+    // Each direction needs its own body, or the filter can't tell them apart.
+    std::vector<void *> bodies;
+    for (const Spec &spec : specs) {
+        const MethodInfo *m = engine::find_method(k, spec.name, 0);
+        std::string where = std::string("Selectable.") + spec.name;
+        if (!m || !returns_as_shaped(m, Shape::InstanceRetFilter0)) {
+            g_runtime->global_failed(kNavigation, where + (m ? " has an unexpected return type" : " not found"));
+            return;
+        }
+        void *body = engine::method_pointer(m);
+        if (std::find(bodies.begin(), bodies.end(), body) != bodies.end()) {
+            g_runtime->global_failed(kNavigation, where + " shares its code with another direction");
+            return;
+        }
+        bodies.push_back(body);
+    }
+    // Engine methods stripped from the game build fail here, not on the first press.
+    std::string missing = g_ui->nav_missing();
+    if (!missing.empty()) {
+        g_runtime->global_failed(kNavigation, missing + " is unavailable");
+        return;
+    }
+    for (const Spec &spec : specs) {
+        std::string error;
+        nav::Dir dir = spec.dir;
+        Filter filter = [dir](Object *self, Object *result) { return navigate(self, result, dir); };
+        if (!hook(engine::find_method(k, spec.name, 0), Shape::InstanceRetFilter0, false, nullptr, error, nullptr, filter)) {
+            // Directions hooked so far stay harmless: the filter checks the state.
+            g_runtime->global_failed(kNavigation, std::string("Selectable.") + spec.name + ": " + error);
+            return;
+        }
+    }
+    g_runtime->global_applied(kNavigation);
+}
+
 // --- config file (written by the in-game settings tab) ---------------------------
 
 class FileStore : public ConfigStore {
@@ -829,6 +967,7 @@ void install(bool all) {
         reasons[static_cast<int>(Target::SettingsMenu)] = skip_reason;
         g_log.write(Level::Warn, "settings tab: " + skip_reason);
     }
+    if (all) install_navigation();
     for (int t = 0; t < kTargetCount; ++t) {
         if (!hooked[t]) g_runtime->target_unavailable(static_cast<Target>(t), "no hook point: " + reasons[t]);
     }

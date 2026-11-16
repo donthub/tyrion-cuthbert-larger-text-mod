@@ -52,6 +52,32 @@ Loading sequence:
   - `VisualNovel.ImageDisplay.SetImage` and `UIBase.GUIObject.Show`.
   - `VisualNovel.SaveMenu.LoadMenu` (the "Save Menu" prefab). Not its `Awake`: that
     body is folded with many other classes' `Awake` and is reached by unrelated objects.
+  - `UnityEngine.UI.Selectable.FindSelectableOnLeft/Right/Up/Down` (result filter).
+- **Controller navigation (FR-UI-51).** The menus use Unity's automatic navigation (pause
+  buttons and Settings tab buttons: Vertical with wrap-around; evidence tabs: Horizontal
+  with wrap-around). `Selectable.FindSelectable` searches *every* active selectable in the
+  scene, and with wrap-around picks the one farthest away in the opposite direction
+  (score `-dot · distance²`), so from a menu it lands on buttons behind it, off screen or
+  hidden. This is a bug of the game itself, not caused by the mod's layout. The runtime filters the result of the four
+  `FindSelectableOn…` methods (which `Selectable.OnMove` calls): Unity's pick is kept when
+  it has the same *scope* as the current selection (nearest ancestor with a
+  `GraphicRaycaster`; every menu prefab root has one), is interactable with navigation
+  mode ≠ None, has its centre inside the root canvas, and is not clipped by its nearest
+  `RectMask2D`/`Mask` (unless both are in the same `ScrollRect`, so lists still scroll).
+  Otherwise Unity's scoring is re-run over such targets only (`core/navigation.cpp`);
+  none → null, so the selection stays. Explicit and None modes are left alone, and Up/Down inside
+  a `VisualNovel.SaveMenu` are handled separately: from a slot (`SaveMenuButton`) the
+  result is the next active slot in the list's sibling order, wrapping at the ends,
+  whether or not it is interactable (Unity skips the empty, non-interactable slots of
+  the Load menu; `Selectable.Navigate` only needs the target to be active, and Submit
+  on a non-interactable button does nothing). Anything else there keeps Unity's result.
+  Inside a `Courtroom.ItemMenu`, a selectable whose parent has an active
+  `GridLayoutGroup` (the evidence items) moves within its row or column, found from the
+  laid-out rects (`nav::grid_step`), wrapping at the ends; this also covers moves that
+  Unity would return null for. The
+  `Navigation` struct's `m_Mode`/`m_WrapAround` are read from the boxed copy with
+  `il2cpp_field_get_value`. Redirects are logged at debug level. Reported as
+  `gamepad_navigation` (`[features] gamepad_navigation`, *Navigation* in the Mod tab).
 - **Save/Load menu (FR-UI-47 … FR-UI-50).** Each slot is a `VisualNovel.SaveMenuButton`
   (`Courtroom.CourtSaveMenuButton` in this build) below `Container/Viewport/Content`, with
   the TMP texts `Container/File Name` (the game writes `Save #N`) and `Container/Date`
@@ -126,9 +152,9 @@ Loading sequence:
     The copy is made below an inactive `DontDestroyOnLoad` holder (`LTM Holder`),
     so its scripts first run when it is moved into the menu;
   - builds a tab prefab once per session from the Gameplay tab below the same
-    holder (`LTM Mod Tab`: header, five `Double Dropdown` rows, a note) and
+    holder (`LTM Mod Tab`: header, six `Double Dropdown` rows, a note) and
     registers it in a grown `tabs` array (`System.Array` methods, so element
-    writes go through the runtime). `SettingsTab.allSettings` lists the ten items;
+    writes go through the runtime). `SettingsTab.allSettings` lists the twelve items;
   - keeps the game's `CustomSettingDropdown` on each item (it opens the list and
     does the navigation) but skips its `Start`, `ResetSelectedOption` and
     `OnDropdownOption(int)` for objects named `LTM …` (hooks that don't call the
@@ -197,6 +223,7 @@ evidence_menu = true
 evidence_notification = true
 pause_when_unfocused = true
 save_menu = true
+gamepad_navigation = true
 ```
 
 Missing, malformed or out-of-range values fall back to the default and are logged

@@ -10,6 +10,7 @@ Makes the game's text easier to read on small screens such as the Steam Deck:
 - **"Obtained / updated evidence" popup:** wider and larger, with the same picture-and-description layout: details beside the picture, and the description below the picture or, without details, wrapping around it.
 - **Save/Load menu:** dates are shown as `YYYY-MM-DD HH:mm` (24-hour), and the most recently saved slot is named *Save #N (latest)*, with "(latest)" in gold italics.
 - **Pause when unfocused:** the game no longer reacts to input while another window has focus.
+- **Controller navigation (fixes a bug of the game):** moving the selection in a menu stays on that menu's visible buttons and wraps around within it, instead of jumping to hidden buttons behind it, where the highlight disappeared. The Save/Load slots (empty ones too) and the evidence items (as a grid, by row and column) wrap around. Switch: *Navigation* in the Mod tab.
 - **In-game settings:** a *Mod* tab in the game's Settings menu, after *Workshop*, to change the mod's settings.
 
 Text that would not fit its box at the larger size (a very long line, name or description) is scaled down just enough to fit, but never below the game's own size.
@@ -74,6 +75,7 @@ evidence_menu = true          ; Clues / Spells / People
 evidence_notification = true  ; "Obtained evidence!" / "Evidence updated!"
 pause_when_unfocused = true   ; ignore input while the game is in the background
 save_menu = true              ; Save/Load menu: ISO dates, "(latest)" marker
+gamepad_navigation = true     ; controller navigation fixes (Navigation in the Mod tab)
 ```
 
 Invalid or missing values fall back to their defaults (with a warning in the log). A broken config never stops the game from starting. Set `debug = true` under `[general]` for a more detailed log.

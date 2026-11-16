@@ -37,7 +37,7 @@ ZIG = {
     ('linux', 'x86_64'): ('tar.xz', '02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239'),
 }
 
-CORE = ['config.cpp', 'layout.cpp', 'tx.cpp', 'mod_settings.cpp', 'features.cpp', 'framework.cpp']
+CORE = ['config.cpp', 'layout.cpp', 'navigation.cpp', 'tx.cpp', 'mod_settings.cpp', 'features.cpp', 'framework.cpp']
 ENGINE = ['bootstrap.cpp', 'il2cpp_api.cpp', 'unity.cpp', 'unity_ui.cpp', 'runtime.cpp']
 MINHOOK = ['buffer.c', 'hook.c', 'trampoline.c', 'hde/hde64.c']
 

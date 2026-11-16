@@ -740,4 +740,206 @@ void UnityUi::set_settings_options(Handle tab, const std::vector<Handle> &option
     set_ref(settings_tab, "firstSelect", first);
 }
 
+// --- directional navigation (FR-UI-51) ----------------------------------------------
+
+namespace {
+
+Class *need_class(const char *ns, const char *name) {
+    Class *k = find_class(ns, name);
+    if (!k) throw EngineError(std::string("class ") + ns + "." + name + " is unavailable");
+    return k;
+}
+
+int object_id(Object *obj) { return unbox<int32_t>(invoke(method(il2cpp_object_get_class(obj), "GetInstanceID", 0), obj)); }
+
+}  // namespace
+
+const UnityUi::NavClasses &UnityUi::nav_classes() {
+    if (!nav_.selectable) {
+        NavClasses n;
+        n.selectable = need_class("UnityEngine.UI", "Selectable");
+        n.navigation = need_class("UnityEngine.UI", "Navigation");
+        n.raycaster = need_class("UnityEngine.UI", "GraphicRaycaster");
+        n.rect_mask = need_class("UnityEngine.UI", "RectMask2D");
+        n.mask = need_class("UnityEngine.UI", "Mask");
+        n.scroll = need_class("UnityEngine.UI", "ScrollRect");
+        n.canvas = need_class("UnityEngine", "Canvas");
+        n.grid = need_class("UnityEngine.UI", "GridLayoutGroup");
+        nav_ = n;
+    }
+    return nav_;
+}
+
+std::vector<Object *> UnityUi::all_selectables() {
+    const NavClasses &k = nav_classes();
+    Object *array;
+    bool filter = false;
+    if (const MethodInfo *all = find_method(k.selectable, "get_allSelectablesArray", 0)) {
+        array = invoke(all, nullptr);
+    } else {
+        // Stripped: every loaded Selectable, of which only the active and
+        // enabled ones count (as in Unity's own list).
+        int32_t unsorted = 0;
+        array = invoke(method(k_.Object, "FindObjectsByType", 2, {kType, "UnityEngine.FindObjectsSortMode"}), nullptr,
+                       {type_object(k.selectable), &unsorted});
+        filter = true;
+    }
+    std::vector<Object *> out;
+    if (!array) return out;
+    // Il2CppArray: header (klass, monitor, bounds, max_length), then elements.
+    auto *raw = reinterpret_cast<uint8_t *>(array);
+    size_t count = *reinterpret_cast<uintptr_t *>(raw + 3 * sizeof(void *));
+    Object **items = reinterpret_cast<Object **>(raw + 4 * sizeof(void *));
+    const MethodInfo *enabled = method(k_.Behaviour, "get_isActiveAndEnabled", 0);
+    for (size_t i = 0; i < count; ++i)
+        if (items[i] && (!filter || unbox<bool>(invoke(enabled, items[i])))) out.push_back(items[i]);
+    return out;
+}
+
+std::string UnityUi::nav_missing() {
+    try {
+        const NavClasses &k = nav_classes();
+        struct Need {
+            Class *k;
+            const char *name;
+            int argc;
+        };
+        if (!find_method(k.selectable, "get_allSelectablesArray", 0) && !find_method(k_.Object, "FindObjectsByType", 2))
+            return "Selectable.get_allSelectablesArray";
+        const Need needs[] = {{k.selectable, "get_navigation", 0},
+                              {k.selectable, "IsInteractable", 0},
+                              {k_.Transform, "get_parent", 0},
+                              {k_.Component, "get_gameObject", 0},
+                              {k_.GameObject, "GetComponent", 1},
+                              {k_.Behaviour, "get_isActiveAndEnabled", 0},
+                              {k_.Object, "GetInstanceID", 0},
+                              {k_.RectTransform, "get_rect", 0},
+                              {k_.Transform, "TransformPoint", 1},
+                              {k_.Transform, "InverseTransformPoint", 1}};
+        for (const Need &n : needs)
+            if (!find_method(n.k, n.name, n.argc)) return std::string(il2cpp_class_get_name(n.k)) + "." + n.name;
+        for (const char *f : {"m_Mode", "m_WrapAround"})
+            if (!il2cpp_class_get_field_from_name(k.navigation, f)) return std::string("Navigation.") + f;
+        return "";
+    } catch (const std::exception &e) {
+        return e.what();
+    }
+}
+
+// The component of class `c` on the GameObject of `component` if it is active
+// and enabled (GameObject.GetComponent: Component's own overloads are stripped
+// from this game build).
+Object *UnityUi::active_component(Object *component, Class *c) {
+    Object *go = invoke(method(k_.Component, "get_gameObject", 0), component);
+    if (!go) return nullptr;
+    Object *comp = invoke(method(k_.GameObject, "GetComponent", 1, {kType}), go, {type_object(c)});
+    return comp && unbox<bool>(invoke(method(k_.Behaviour, "get_isActiveAndEnabled", 0), comp)) ? comp : nullptr;
+}
+
+bool UnityUi::inside(Object *selectable, Comp c) {
+    Class *k = k_.comp[static_cast<int>(c)];
+    if (!k) return false;
+    const MethodInfo *get_parent = method(k_.Transform, "get_parent", 0);
+    Handle go = game_object_of(selectable);
+    for (Object *t = go ? transform(go) : nullptr; t; t = invoke(get_parent, t))
+        if (active_component(t, k)) return true;
+    return false;
+}
+
+Object *UnityUi::save_slot_neighbour(Object *selectable, bool down) {
+    Handle slot = game_object_of(selectable);
+    if (!slot || !has(slot, Comp::SaveMenuButton)) return nullptr;
+    Handle list = parent(slot);
+    if (!list) return nullptr;
+    // The shown slots, top to bottom (the list's vertical layout, in order).
+    std::vector<Handle> slots;
+    int self = -1, self_id = instance_id(slot);
+    for (int i = 0, n = child_count(list); i < n; ++i) {
+        Handle c = child(list, i);
+        if (!active_in_hierarchy(c) || !has(c, Comp::SaveMenuButton)) continue;
+        if (instance_id(c) == self_id) self = static_cast<int>(slots.size());
+        slots.push_back(c);
+    }
+    int next = nav::step_wrapping(self, static_cast<int>(slots.size()), down);
+    if (next < 0) return nullptr;
+    Handle target = slots[static_cast<size_t>(next)];
+    return invoke(method(k_.GameObject, "GetComponent", 1, {kType}), target, {type_object(nav_classes().selectable)});
+}
+
+Object *UnityUi::grid_neighbour(Object *selectable, nav::Dir dir) {
+    const NavClasses &k = nav_classes();
+    Handle item = game_object_of(selectable);
+    Handle grid = item ? parent(item) : nullptr;
+    if (!grid || !active_component(transform(grid), k.grid)) return nullptr;
+    std::vector<Handle> items;
+    std::vector<Bounds> cells;
+    int self = -1, self_id = instance_id(item);
+    for (int i = 0, n = child_count(grid); i < n; ++i) {
+        Handle c = child(grid, i);
+        if (!active_in_hierarchy(c) || !has(c, Comp::Button)) continue;
+        if (instance_id(c) == self_id) self = static_cast<int>(items.size());
+        items.push_back(c);
+        cells.push_back(bounds_in(c, grid));
+    }
+    int next = nav::grid_step(cells, self, dir);
+    if (next < 0) return nullptr;
+    return invoke(method(k_.GameObject, "GetComponent", 1, {kType}), items[static_cast<size_t>(next)],
+                  {type_object(k.selectable)});
+}
+
+Handle UnityUi::root_canvas(Object *selectable) {
+    // The outermost active canvas above it (Canvas.rootCanvas, without relying
+    // on more engine methods).
+    const NavClasses &k = nav_classes();
+    const MethodInfo *get_parent = method(k_.Transform, "get_parent", 0);
+    Handle go = game_object_of(selectable);
+    Object *t = go ? transform(go) : nullptr;
+    Object *root = nullptr;
+    for (; t; t = invoke(get_parent, t))
+        if (active_component(t, k.canvas)) root = t;
+    return root ? game_object_of(root) : nullptr;
+}
+
+nav::Item UnityUi::nav_item(Object *selectable, Handle canvas) {
+    const NavClasses &k = nav_classes();
+    nav::Item it;
+    Handle go = game_object_of(selectable);
+    it.id = instance_id(go);
+
+    // Navigation is a struct; its fields are read from the boxed copy.
+    Object *navigation = invoke(method(k.selectable, "get_navigation", 0), selectable);
+    if (!navigation) throw EngineError("Selectable.navigation returned nothing");
+    FieldInfo *mode_field = il2cpp_class_get_field_from_name(k.navigation, "m_Mode");
+    FieldInfo *wrap_field = il2cpp_class_get_field_from_name(k.navigation, "m_WrapAround");
+    if (!mode_field || !wrap_field) throw EngineError("Navigation fields are unavailable");
+    int32_t mode = 0;
+    bool wrap = false;
+    il2cpp_field_get_value(navigation, mode_field, &mode);
+    il2cpp_field_get_value(navigation, wrap_field, &wrap);
+    if (mode < 0 || mode > 4) throw EngineError("unexpected navigation mode " + std::to_string(mode));
+    it.mode = static_cast<nav::Mode>(mode);
+    it.wrap = wrap;
+    it.interactable = unbox<bool>(invoke(method(k.selectable, "IsInteractable", 0), selectable));
+    it.rect = bounds_in(go, canvas);  // Mismatch for non-UI objects
+
+    // Up the hierarchy: the clipping rect and scroll view it sits in, up to its
+    // menu (the nearest GraphicRaycaster, which the game's menus have at their root).
+    const MethodInfo *get_parent = method(k_.Transform, "get_parent", 0);
+    Object *self_t = transform(go);
+    for (Object *t = self_t; t; t = invoke(get_parent, t)) {
+        if (t != self_t) {
+            if (!it.has_viewport && (active_component(t, k.rect_mask) || active_component(t, k.mask))) {
+                it.has_viewport = true;
+                it.viewport = bounds_in(game_object_of(t), canvas);
+            }
+            if (!it.scroll && active_component(t, k.scroll)) it.scroll = object_id(t);
+        }
+        if (active_component(t, k.raycaster)) {
+            it.scope = object_id(t);
+            break;
+        }
+    }
+    return it;
+}
+
 }  // namespace ltm::engine

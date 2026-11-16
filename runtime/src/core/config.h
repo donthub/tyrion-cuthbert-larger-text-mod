@@ -12,7 +12,7 @@ constexpr double kMaxScale = 2.0;
 constexpr double kDefaultOpacity = 0.99;
 
 // Config keys of the feature switches, in display order.
-extern const char *const kFeatureKeys[8];
+extern const char *const kFeatureKeys[9];
 
 struct Settings {
     bool enabled = true;

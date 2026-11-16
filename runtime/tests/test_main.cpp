@@ -10,6 +10,7 @@
 #include "../src/core/framework.h"
 #include "../src/core/layout.h"
 #include "../src/core/mod_settings.h"
+#include "../src/core/navigation.h"
 #include "fake_ui.h"
 
 using namespace ltm;
@@ -517,7 +518,9 @@ TEST(master_switch_off_changes_nothing) {
     rt.on_frame(ui);
     for (size_t i = 0; i < roots.size(); ++i) CHECK(snapshot(roots[i]) == before[i]);
     CHECK(!rt.global_enabled("pause_when_unfocused"));
+    CHECK(!rt.global_enabled("gamepad_navigation"));
     CHECK(log.has("FEATURE dialogue_box disabled"));
+    CHECK(log.has("FEATURE gamepad_navigation disabled"));
 }
 
 TEST(feature_switch_off_changes_only_that_feature) {
@@ -1003,6 +1006,15 @@ TEST(global_feature_reporting) {
     rt.global_failed("pause_when_unfocused", "icall missing");
     CHECK(!rt.global_enabled("pause_when_unfocused"));
     CHECK(log.has("FEATURE pause_when_unfocused failed: icall missing"));
+    // Directional navigation: on by default, off with its own switch.
+    CHECK(rt.global_enabled("gamepad_navigation"));
+    Settings off = settings();
+    off.features["gamepad_navigation"] = false;
+    MemLog off_log;
+    Runtime off_rt(off, off_log);
+    off_rt.report_disabled();
+    CHECK(!off_rt.global_enabled("gamepad_navigation"));
+    CHECK(off_log.has("FEATURE gamepad_navigation disabled"));
 }
 
 // --- config writing (in-game settings) -----------------------------------------
@@ -1168,13 +1180,15 @@ TEST(settings_tab_added_after_workshop_once) {
     auto tabs = ui.settings_tabs(menu);
     CHECK(tabs.size() == 3 && tabs.back() == "LTM Mod");
 
-    // The template: header, six rows of two (the last one with one), the note;
+    // The template: header, six rows of two, the note;
     // every setting navigable.
     Node *tmpl = ui.N(ui.settings_tab_prefab(menu, "LTM Mod"));
     CHECK(ui.find(tmpl, "Tab Header") && ui.N(ui.find(tmpl, "Tab Header"))->text == "Mod");
     CHECK(!ui.N(ui.find(tmpl, "Tab Header"))->comps.count(Comp::LocalizedText));
     CHECK(ui.child_count(tmpl) == 8);
-    CHECK(ui.child_count(ui.find(tmpl, "LTM Row 6")) == 1 && ui.find(tmpl, "LTM Row 6/LTM save_menu"));
+    CHECK(ui.child_count(ui.find(tmpl, "LTM Row 6")) == 2 && ui.find(tmpl, "LTM Row 6/LTM save_menu"));
+    Node *navigation = ui.N(ui.find(tmpl, "LTM Row 6/LTM gamepad_navigation"));
+    CHECK(navigation && ui.N(ui.find(navigation, "Title"))->text == "Navigation");
     CHECK(ui.find(tmpl, "LTM Note") != nullptr);
     CHECK(ui.tab_options[tmpl].size() == mod_controls().size());
     CHECK(ui.find(tmpl, "LTM Row 1/LTM enabled") && ui.find(tmpl, "LTM Row 5/LTM pause_when_unfocused"));
@@ -1463,4 +1477,130 @@ int main() {
     }
     std::printf("\n%zu tests, %d checks, %d failures\n", tests().size(), g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
+}
+
+// --- directional navigation (FR-UI-51) ------------------------------------------
+
+namespace {
+
+const Bounds kScreen{-960, -540, 960, 540};
+
+nav::Item nav_button(int id, int scope, float x, float y, nav::Mode mode = nav::Mode::Automatic, bool wrap = false) {
+    nav::Item it;
+    it.id = id;
+    it.scope = scope;
+    it.rect = {x - 100, y - 25, x + 100, y + 25};
+    it.mode = mode;
+    it.wrap = wrap;
+    return it;
+}
+
+// The pause menu: a vertical list with wrap-around (scope 1), and the testimony's
+// Press/Present buttons in the top screen corners behind it (scope 2).
+std::vector<nav::Item> pause_scene() {
+    std::vector<nav::Item> items;
+    for (int i = 0; i < 6; ++i) items.push_back(nav_button(10 + i, 1, -600, 250 - i * 100.0f, nav::Mode::Vertical, true));
+    items.push_back(nav_button(20, 2, -840, 500));
+    items.push_back(nav_button(21, 2, 840, 500));
+    return items;
+}
+
+}  // namespace
+
+TEST(navigation_wraps_within_the_menu) {
+    std::vector<nav::Item> items = pause_scene();
+    const nav::Item &quit = items[5], &evidence = items[0];
+    // Unity's pick (Press, behind the menu) is rejected; the list wraps.
+    CHECK(!nav::valid(quit, items[6], kScreen));
+    CHECK(nav::pick(quit, nav::Dir::Down, items, kScreen) == 0);
+    CHECK(nav::pick(evidence, nav::Dir::Up, items, kScreen) == 5);
+    // Ordinary steps are Unity's.
+    CHECK(nav::pick(evidence, nav::Dir::Down, items, kScreen) == 1);
+    CHECK(nav::valid(evidence, items[1], kScreen));
+    // Without wrap-around the edge stays put.
+    nav::Item no_wrap = quit;
+    no_wrap.wrap = false;
+    CHECK(nav::pick(no_wrap, nav::Dir::Down, items, kScreen) == -1);
+}
+
+TEST(navigation_wraps_a_horizontal_tab_row) {
+    std::vector<nav::Item> items;
+    for (int i = 0; i < 3; ++i) items.push_back(nav_button(30 + i, 1, -300 + i * 300.0f, 400, nav::Mode::Horizontal, true));
+    items.push_back(nav_button(20, 2, -840, 500));  // Press, top left, another menu
+    items.push_back(nav_button(21, 2, 840, 500));   // Present, top right
+    CHECK(nav::pick(items[0], nav::Dir::Left, items, kScreen) == 2);
+    CHECK(nav::pick(items[2], nav::Dir::Right, items, kScreen) == 0);
+    CHECK(nav::pick(items[1], nav::Dir::Right, items, kScreen) == 2);
+}
+
+TEST(navigation_rejects_hidden_and_off_screen_targets) {
+    nav::Item self = nav_button(1, 1, 0, 0);
+    nav::Item off_screen = nav_button(2, 1, 1200, 0);
+    CHECK(!nav::valid(self, off_screen, kScreen));
+    nav::Item disabled = nav_button(3, 1, 300, 0);
+    disabled.interactable = false;
+    CHECK(!nav::valid(self, disabled, kScreen));
+    nav::Item none = nav_button(4, 1, 300, 0, nav::Mode::None);
+    CHECK(!nav::valid(self, none, kScreen));
+    CHECK(!nav::valid(self, self, kScreen));
+    CHECK(nav::valid(self, nav_button(5, 1, 300, 0), kScreen));
+}
+
+TEST(navigation_respects_clipping) {
+    // An evidence grid in a scroll view (id 7), viewport x -500..0; a second
+    // list's entry clipped away elsewhere in the same menu.
+    Bounds viewport{-500, -300, 0, 300};
+    nav::Item cell = nav_button(1, 1, -300, 0);
+    cell.has_viewport = true;
+    cell.viewport = viewport;
+    cell.scroll = 7;
+    nav::Item below = cell;
+    below.id = 2;
+    below.rect = {-400, -425, -200, -375};  // scrolled out of view, same scroll view
+    nav::Item other = nav_button(3, 1, 300, 0);
+    other.has_viewport = true;
+    other.viewport = {400, -300, 800, 300};  // clipped away in another view
+    other.scroll = 8;
+    CHECK(nav::valid(cell, below, kScreen));   // lists still scroll
+    CHECK(!nav::valid(cell, other, kScreen));  // never into a hidden entry elsewhere
+    std::vector<nav::Item> items = {cell, below, other};
+    CHECK(nav::pick(cell, nav::Dir::Right, items, kScreen) == -1);  // edge: stay
+    CHECK(nav::pick(cell, nav::Dir::Down, items, kScreen) == 1);
+}
+
+TEST(navigation_steps_through_save_slots_with_wrap) {
+    CHECK(nav::step_wrapping(0, 5, true) == 1);
+    CHECK(nav::step_wrapping(4, 5, true) == 0);
+    CHECK(nav::step_wrapping(0, 5, false) == 4);
+    CHECK(nav::step_wrapping(3, 5, false) == 2);
+    CHECK(nav::step_wrapping(0, 1, true) == -1);
+    CHECK(nav::step_wrapping(-1, 5, true) == -1);
+}
+
+TEST(navigation_wraps_the_evidence_grid) {
+    // 3 columns, 2 full rows and one item in the third row (index = row*3+col).
+    std::vector<Bounds> cells;
+    for (int i = 0; i < 7; ++i) {
+        float x = (i % 3) * 110.0f, y = -(i / 3) * 110.0f;
+        cells.push_back({x, y - 100, x + 100, y});
+    }
+    CHECK(nav::grid_step(cells, 0, nav::Dir::Right) == 1);
+    CHECK(nav::grid_step(cells, 2, nav::Dir::Right) == 0);  // row wraps
+    CHECK(nav::grid_step(cells, 3, nav::Dir::Left) == 5);   // row wraps
+    CHECK(nav::grid_step(cells, 4, nav::Dir::Left) == 3);
+    CHECK(nav::grid_step(cells, 0, nav::Dir::Up) == 6);     // column wraps to its bottom
+    CHECK(nav::grid_step(cells, 1, nav::Dir::Up) == 4);     // shorter column
+    CHECK(nav::grid_step(cells, 6, nav::Dir::Down) == 0);   // and back to the top
+    CHECK(nav::grid_step(cells, 4, nav::Dir::Down) == 1);
+    CHECK(nav::grid_step(cells, 1, nav::Dir::Down) == 4);
+    CHECK(nav::grid_step(cells, 6, nav::Dir::Left) == -1);  // alone in its row: stay
+    CHECK(nav::grid_step(cells, 9, nav::Dir::Left) == -1);
+}
+
+TEST(navigation_leaves_explicit_links_alone) {
+    CHECK(!nav::corrects(nav_button(1, 1, 0, 0, nav::Mode::Explicit)));
+    CHECK(!nav::corrects(nav_button(1, 1, 0, 0, nav::Mode::None)));
+    CHECK(nav::corrects(nav_button(1, 1, 0, 0, nav::Mode::Automatic)));
+    CHECK(nav::corrects(nav_button(1, 1, 0, 0, nav::Mode::Vertical)));
+    CHECK(nav::corrects(nav_button(1, 1, 0, 0, nav::Mode::Horizontal)));
 }

@@ -4,6 +4,7 @@
 #include <map>
 #include <vector>
 
+#include "../core/navigation.h"
 #include "../core/ui.h"
 #include "unity.h"
 
@@ -83,6 +84,28 @@ class UnityUi : public Ui {
     Handle game_object_of(Object *component);
     bool has_component(Object *game_object, Comp c) { return has(game_object, c); }
 
+    // Directional navigation (FR-UI-51), outside the Ui interface: the core
+    // only gets the plain facts (nav::Item).
+    // Every enabled selectable in the scene (Selectable.allSelectablesArray).
+    std::vector<Object *> all_selectables();
+    // The first engine method or field navigation needs that this game build
+    // lacks (stripped), or "" when all are there.
+    std::string nav_missing();
+    // Whether an active and enabled component `c` is on the selectable's object
+    // or above it.
+    bool inside(Object *selectable, Comp c);
+    // For a Save/Load slot button: the slot above or below it, empty or not,
+    // wrapping at the ends of the list; nullptr for anything else.
+    Object *save_slot_neighbour(Object *selectable, bool down);
+    // For an entry of a GridLayoutGroup: the next entry in its row or column,
+    // wrapping at the ends; nullptr for anything else.
+    Object *grid_neighbour(Object *selectable, nav::Dir dir);
+    // The root canvas that draws a selectable (its GameObject), nullptr when none.
+    Handle root_canvas(Object *selectable);
+    // A selectable's menu, rect, clipping and navigation settings, in `canvas`'s
+    // space. Throws Mismatch for a selectable that is no UI object.
+    nav::Item nav_item(Object *selectable, Handle canvas);
+
   private:
     Handle pin(Object *go);
     Object *transform(Handle go);
@@ -90,12 +113,19 @@ class UnityUi : public Ui {
     Object *component(Handle go, Comp c);  // throws when missing
     Class *klass(Comp c);
     Object *settings_tab_array(Handle menu);
+    struct NavClasses {
+        Class *selectable = nullptr, *navigation = nullptr, *raycaster = nullptr, *rect_mask = nullptr,
+              *mask = nullptr, *scroll = nullptr, *canvas = nullptr, *grid = nullptr;
+    };
+    const NavClasses &nav_classes();
+    Object *active_component(Object *component, Class *c);
 
     const UnityClasses &k_;
     std::vector<il2cpp::GCHandle> temp_;
     std::map<Handle, std::pair<il2cpp::GCHandle, int>> retained_;
     Object *holder_ = nullptr;
     il2cpp::GCHandle holder_handle_ = 0;
+    NavClasses nav_;
 };
 
 }  // namespace ltm::engine

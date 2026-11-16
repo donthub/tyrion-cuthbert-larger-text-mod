@@ -43,6 +43,10 @@ Runtime::Runtime(const Settings &settings, Log &log, std::vector<std::unique_ptr
     Slot focus;
     focus.key = focus.config_key = "pause_when_unfocused";
     slots_.push_back(std::move(focus));
+    // Controller navigation (FR-UI-51), a global like the focus handling.
+    Slot navigation;
+    navigation.key = navigation.config_key = "gamepad_navigation";
+    slots_.push_back(std::move(navigation));
     for (Slot &slot : slots_) {
         if (slot.unit && slot.unit->always_on()) continue;
         if (!settings_.enabled || !settings_.feature(slot.config_key)) slot.state = UnitState::Disabled;

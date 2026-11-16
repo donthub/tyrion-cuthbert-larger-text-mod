@@ -51,6 +51,7 @@ FEATURES = (
     ("evidence_notification", "Larger 'Obtained evidence' / 'Evidence updated' notification"),
     ("pause_when_unfocused", "Game pauses while another window has focus"),
     ("save_menu", "Save/Load menu: YYYY-MM-DD HH:mm dates, newest save marked (latest)"),
+    ("gamepad_navigation", "Controller navigation stays in the open menu, wraps in lists and the evidence grid"),
 )
 FEATURE_KEYS = tuple(key for key, _ in FEATURES)
 
