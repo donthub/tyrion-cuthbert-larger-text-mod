@@ -931,6 +931,25 @@ TEST(picture_padding_falls_back_to_the_game_gap) {
     CHECK_NEAR(ui.path(w, "Top/Item Info/LTM Description Continuation")->rect.sizeDelta.x, 270 + 30);
 }
 
+TEST(evidence_menu_switch_covers_the_popup) {
+    FakeUi ui;
+    MemLog log;
+    Settings st = settings();
+    st.features["evidence_menu"] = false;
+    Runtime rt(st, log);
+    rt.report_disabled();
+    Node *menu = make_menu(ui);
+    Node *p = make_popup(ui);
+    std::string menu_before = snapshot(menu), popup_before = snapshot(p);
+    rt.on_instance(ui, Target::ItemMenu, menu);
+    rt.on_instance(ui, Target::Notification, p);
+    rt.on_frame(ui);
+    CHECK(snapshot(menu) == menu_before);
+    CHECK(snapshot(p) == popup_before);
+    CHECK(log.has("FEATURE evidence_menu disabled"));
+    CHECK(log.has("FEATURE evidence_notification disabled"));
+}
+
 TEST(tick_errors_disable_only_the_feature) {
     FakeUi ui;
     MemLog log;
@@ -1074,7 +1093,10 @@ TEST(config_format_number_like_the_installer) {
 
 TEST(mod_controls_cover_every_setting) {
     std::set<std::string> keys;
-    for (const ModControl &c : mod_controls()) keys.insert(c.key);
+    for (const ModControl &c : mod_controls()) {
+        keys.insert(c.key);
+        CHECK(c.description && *c.description);
+    }
     CHECK(keys.count("enabled") && keys.count("scale") && keys.count("opacity"));
     for (const char *k : kFeatureKeys) CHECK(keys.count(k));
     CHECK(keys.size() == mod_controls().size());
@@ -1157,6 +1179,7 @@ static Node *make_settings_menu(FakeUi &ui, bool with_workshop = true) {
     Node *header = ui.node("Tab Header", gameplay);
     header->comps[Comp::Tmp][Prop::TmpFontSize] = 76;
     header->comps[Comp::LocalizedText];
+    ui.colors[header] = Rgba{0.91f, 0.69f, 0.29f, 1};  // gold
     Node *row = ui.node("Double Dropdown", gameplay);
     make_tab_item(ui, row, "Text Speed");
     make_tab_item(ui, row, "Character Emotes");
@@ -1191,19 +1214,24 @@ TEST(settings_tab_added_after_workshop_once) {
     auto tabs = ui.settings_tabs(menu);
     CHECK(tabs.size() == 3 && tabs.back() == "LTM Mod");
 
-    // The template: header, seven rows of two, the note;
+    // The template: header, seven rows (the last with one control), the description, the note;
     // every setting navigable.
     Node *tmpl = ui.N(ui.settings_tab_prefab(menu, "LTM Mod"));
     CHECK(ui.find(tmpl, "Tab Header") && ui.N(ui.find(tmpl, "Tab Header"))->text == "Mod");
     CHECK(!ui.N(ui.find(tmpl, "Tab Header"))->comps.count(Comp::LocalizedText));
-    CHECK(ui.child_count(tmpl) == 9);
-    CHECK(ui.child_count(ui.find(tmpl, "LTM Row 7")) == 2 && ui.find(tmpl, "LTM Row 7/LTM selection_border"));
+    CHECK(ui.child_count(tmpl) == 10);
+    CHECK(ui.child_count(ui.find(tmpl, "LTM Row 7")) == 1);
     Node *evidence = ui.N(ui.find(tmpl, "LTM Row 7/LTM evidence_buttons"));
     CHECK(evidence && ui.N(ui.find(evidence, "Title"))->text == "Evidence Buttons");
-    CHECK(ui.child_count(ui.find(tmpl, "LTM Row 6")) == 2 && ui.find(tmpl, "LTM Row 6/LTM save_menu"));
+    CHECK(ui.child_count(ui.find(tmpl, "LTM Row 6")) == 2 && ui.find(tmpl, "LTM Row 6/LTM selection_border"));
     Node *navigation = ui.N(ui.find(tmpl, "LTM Row 6/LTM gamepad_navigation"));
     CHECK(navigation && ui.N(ui.find(navigation, "Title"))->text == "Navigation");
     CHECK(ui.find(tmpl, "LTM Note") != nullptr);
+    Node *description = ui.N(ui.find(tmpl, "LTM Description"));
+    CHECK(description && description->text.empty());
+    CHECK(description && ui.sibling_index(description) + 1 == ui.sibling_index(ui.find(tmpl, "LTM Note")));
+    Node *note = ui.N(ui.find(tmpl, "LTM Note"));
+    CHECK(description && ui.colors[description].r == ui.colors[note].r && ui.colors[description].b == 0.29f);  // gold, as the note
     CHECK(ui.tab_options[tmpl].size() == mod_controls().size());
     CHECK(ui.find(tmpl, "LTM Row 1/LTM enabled") && ui.find(tmpl, "LTM Row 5/LTM pause_when_unfocused"));
     Node *scale_item = ui.N(ui.find(tmpl, "LTM Row 1/LTM scale"));
@@ -1250,6 +1278,20 @@ TEST(settings_tab_shows_and_saves_the_config) {
     CHECK(ui.prop(enabled, Comp::Dropdown, Prop::DropdownValue) == 0);  // On
     rt.on_frame(ui);
     CHECK(store.writes == 0);  // showing the tab saves nothing
+
+    // The selected control's description is shown above the note.
+    Node *description = ui.N(ui.find(tab, "LTM Description"));
+    CHECK(description && description->text.empty());
+    ui.selection = ui.N(ui.find(tab, "LTM Row 4/LTM text_log/Dropdown"));
+    rt.on_frame(ui);
+    CHECK(description->text.rfind("Description", 0) != 0);  // no prefix
+    CHECK(description->text.find("text log") != std::string::npos);
+    ui.selection = ui.N(ui.find(tab, "LTM Row 1/LTM enabled"));
+    rt.on_frame(ui);
+    CHECK(description->text.find("Master switch") != std::string::npos);
+    ui.selection = nullptr;
+    rt.on_frame(ui);
+    CHECK(description->text.empty());
 
     ui.prop(enabled, Comp::Dropdown, Prop::DropdownValue) = 1;
     rt.on_frame(ui);

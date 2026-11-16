@@ -858,7 +858,7 @@ class EvidenceMenuUnit : public Unit {
 
 class NotificationUnit : public Unit {
   public:
-    NotificationUnit() : Unit("evidence_notification", "evidence_notification", Target::Notification) {}
+    NotificationUnit() : Unit("evidence_notification", "evidence_menu", Target::Notification) {}
     bool matches(Ui &, Handle) override { return true; }
     bool wants_tick() const override { return true; }
 
@@ -1102,6 +1102,7 @@ const char *const kWorkshopButton = "Steam Workshop";
 const char *const kWorkshopTab = "Workshop";
 const char *const kGameplayTab = "Gameplay";
 const char *const kRow = "Double Dropdown";
+const char *const kModDescription = "LTM Description";
 
 class SettingsTabUnit : public Unit {
   public:
@@ -1165,6 +1166,7 @@ class SettingsTabUnit : public Unit {
             bound_ = id;
             return;
         }
+        show_description(ui);
         for (Control &c : controls_) {
             int index = static_cast<int>(std::lround(ui.get(c.dropdown, Comp::Dropdown, Prop::DropdownValue)));
             if (index == c.index || index < 0 || index >= static_cast<int>(c.choices.values.size())) continue;
@@ -1176,10 +1178,25 @@ class SettingsTabUnit : public Unit {
   private:
     struct Control {
         std::string key;
+        Handle item = nullptr;      // only valid while bound_
         Handle dropdown = nullptr;  // only valid while bound_
         Choices choices;
         int index = -1;
     };
+
+    // Shows the description of the control holding the selection, if any.
+    void show_description(Ui &ui) {
+        if (!description_) return;
+        int shown = -1;
+        for (Handle h = ui.selected(); h && shown < 0; h = ui.parent(h)) {
+            int id = ui.instance_id(h);
+            for (size_t i = 0; i < controls_.size(); ++i)
+                if (ui.instance_id(controls_[i].item) == id) shown = static_cast<int>(i);
+        }
+        if (shown == shown_) return;
+        shown_ = shown;
+        ui.set_text(description_, shown < 0 ? "" : mod_controls()[static_cast<size_t>(shown)].description);
+    }
 
     // The tab prefab: built once per session from the Gameplay tab and kept
     // below the holder (the game instantiates it like its own prefabs).
@@ -1234,6 +1251,10 @@ class SettingsTabUnit : public Unit {
         double size = ui.get(header, Comp::Tmp, Prop::TmpFontSize);
         ui.set(note, Comp::Tmp, Prop::TmpAutoSize, 0);
         ui.set(note, Comp::Tmp, Prop::TmpFontSize, std::max(20.0, size * 0.4));
+        // The selected control's description, above the note and like it.
+        Handle description = ui.clone(note, t, kModDescription);
+        ui.set_parent(description, t, ui.sibling_index(note));
+        ui.set_text(description, "");
         ui.set_settings_options(t, options);
         ui.retain(t);
         template_ = t;
@@ -1252,6 +1273,7 @@ class SettingsTabUnit : public Unit {
             if (!item) throw Mismatch(std::string("the Mod tab has no ") + mc.key + " setting");
             Control c;
             c.key = mc.key;
+            c.item = item;
             c.dropdown = need(ui, item, "Dropdown", {Comp::Dropdown});
             c.choices = mod_choices(mc.key, saved);
             c.index = c.choices.index_of(mod_value(mc.key, saved));
@@ -1259,6 +1281,8 @@ class SettingsTabUnit : public Unit {
             ui.set(c.dropdown, Comp::Dropdown, Prop::DropdownValue, c.index);
             controls_.push_back(std::move(c));
         }
+        description_ = need(ui, tab, kModDescription, {Comp::Tmp});
+        shown_ = -2;  // unknown: set on the next frame
     }
 
     void save(const std::string &key, double value, const Context &ctx) {
@@ -1274,6 +1298,8 @@ class SettingsTabUnit : public Unit {
     Handle template_ = nullptr;
     int bound_ = 0;
     std::vector<Control> controls_;
+    Handle description_ = nullptr;  // only valid while bound_
+    int shown_ = -2;                // the control whose description is shown, -1 none
 };
 
 }  // namespace

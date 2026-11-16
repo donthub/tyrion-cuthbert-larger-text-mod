@@ -186,7 +186,9 @@ Loading sequence:
     The copy is made below an inactive `DontDestroyOnLoad` holder (`LTM Holder`),
     so its scripts first run when it is moved into the menu;
   - builds a tab prefab once per session from the Gameplay tab below the same
-    holder (`LTM Mod Tab`: header, seven `Double Dropdown` rows, a note) and
+    holder (`LTM Mod Tab`: header, seven `Double Dropdown` rows,
+    `LTM Description`, which follows the selection and shows that item's description
+    in the note's style, and a note) and
     registers it in a grown `tabs` array (`System.Array` methods, so element
     writes go through the runtime). `SettingsTab.allSettings` lists the fourteen items;
   - keeps the game's `CustomSettingDropdown` on each item (it opens the list and
@@ -254,7 +256,6 @@ cross_examination = true
 story_images = true
 text_log = true
 evidence_menu = true
-evidence_notification = true
 pause_when_unfocused = true
 save_menu = true
 gamepad_navigation = true

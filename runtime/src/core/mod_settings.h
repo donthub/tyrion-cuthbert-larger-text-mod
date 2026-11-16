@@ -11,6 +11,7 @@ namespace ltm {
 struct ModControl {
     const char *key;    // "enabled", "scale", "opacity" or a feature key (config key)
     const char *label;  // shown in the tab
+    const char *description;  // what it does, shown above the note while selected
 };
 
 // The controls in display order: two per row, like the game's Gameplay tab.

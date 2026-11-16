@@ -39,7 +39,7 @@ The mod makes the game's text and UI easier to read on small screens, especially
 | Log | A text file in the mod folder where the runtime component records what it applied, skipped and why. |
 | Scale | A multiplier for text size, from 1.1 to 2.0. The default is 1.5, i.e. 50 % larger. |
 | Opacity | The alpha of the dialogue and narrator panel backgrounds: 0 is transparent and 1 is opaque. The default is 0.99. |
-| Feature | One independently applied group of changes, e.g. dialogue box, cross-examination box, story images, text log, evidence menu, evidence notification, pause when unfocused. |
+| Feature | One independently applied group of changes, e.g. dialogue box, cross-examination box, story images, text log, evidence menu (including the evidence notification), pause when unfocused. |
 
 ---
 
@@ -127,6 +127,7 @@ All UI changes **shall** be scaled by the chosen *scale*. At runtime they **shal
 - **FR-UI-42** The tab shall offer every config setting of FR-RT-4: the master switch, the scale (at least 1.1 to 2.0 in steps of 0.1), the opacity (a range of steps from 0 to 1 including the default), and one on/off switch per feature. When the tab opens, it shall show the values currently saved in the config. A value that is not one of the offered steps shall be offered too, so opening the tab never changes a setting.
 - **FR-UI-43** A change shall be saved to the config immediately and atomically. Only the changed setting's line shall change; comments, unknown keys and other settings shall be kept (as FR-INST-13). If the config can't be written, the error is logged and the game is unaffected.
 - **FR-UI-44** Changes shall take effect at the next game start (FR-RT-5). The tab shall say so.
+- **FR-UI-44a** Above that notice, the tab shall describe the feature of the selected setting, in the notice's colour. It follows the selection; with no setting selected, it is empty.
 - **FR-UI-45** The tab shall not read or change the game's own settings, and shall not change the game's other tabs.
 - **FR-UI-46** The tab shall be available when the master switch is off, so the mod can be switched back on in the game (FR-RT-10). It shall follow FR-RT-6 and FR-RT-7: if the menu is not as expected, no button or tab is added and the reason is logged.
 

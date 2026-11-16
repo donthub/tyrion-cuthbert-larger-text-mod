@@ -185,6 +185,7 @@ class FakeUi : public Ui {
         n->active = src->active;
         n->text = src->text;
         n->text_lines = src->text_lines;
+        if (colors.count(src)) colors[n] = colors[src];
         for (auto &e : std::map<std::pair<Node *, std::string>, std::string>(strings))
             if (e.first.first == src) strings[{n, e.first.second}] = e.second;
         for (auto &e : std::map<std::pair<Node *, std::string>, std::vector<std::string>>(string_lists))
