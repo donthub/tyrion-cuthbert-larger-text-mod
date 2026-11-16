@@ -53,6 +53,7 @@ Loading sequence:
   - `VisualNovel.SaveMenu.LoadMenu` (the "Save Menu" prefab). Not its `Awake`: that
     body is folded with many other classes' `Awake` and is reached by unrelated objects.
   - `UnityEngine.UI.Selectable.FindSelectableOnLeft/Right/Up/Down` (result filter).
+  - `Rewired.Player.GetButtonDown(string)` (result filter, FR-UI-53).
 - **Controller navigation (FR-UI-51).** The menus use Unity's automatic navigation (pause
   buttons and Settings tab buttons: Vertical with wrap-around; evidence tabs: Horizontal
   with wrap-around). `Selectable.FindSelectable` searches *every* active selectable in the
@@ -100,6 +101,27 @@ Loading sequence:
   created once and found again by name: four gold (`#E8B04A`) `RawImage` edges, 2 units
   wide, stretched along its sides, drawn last and not raycast targets. The previous
   target's frame is hidden. The target is retained while framed.
+- **Evidence menu buttons (FR-UI-53).** Input goes through Rewired (player
+  `Player0`). Default controller bindings: *Present* = RB, *Press* = LB (also
+  *Expand Profile*, *Detect Magic*), *Text Log* = Y; there are no tab actions
+  (`UIUtils.TAB_LEFT/RIGHT` name actions that don't exist). `Courtroom.ItemMenu`
+  polls only `GetButtonDown("Present")` (`ITEM_SUBMIT`), and `MenuCloseButton`
+  polls *Cancel*. A postfix on `ItemMenu.Awake` keeps the newest menu. The frame
+  tick marks it *open* while it is active and the EventSystem selection is inside
+  it, and in controller mode (`UIBase.ControllerModeHandler.instance.controllerActive`,
+  the flag that also swaps text for glyphs) it calls the unhooked
+  `GetButtonDown` for *Press* (LB) and *Present* (RB) and selects the neighbouring
+  active child of `Tabs` (current tab: `tabButtons[currentTab].gameObj`) with
+  `EventSystem.SetSelectedGameObject`; the tab's `EvidenceTabButton.OnSelect`
+  loads the list synchronously, so with an item selected before, the first item of
+  `Content` is selected afterwards. Not while `Image Display` is active. The
+  filter answers the game's `GetButtonDown("Present")` with the *Text Log*
+  query while open in controller mode. The glyph `Present Button/Controller/Icon`
+  (`UIBase.InputGlyph`) gets `actionName = "Text Log"`; its `Start` draws it (an
+  inactive button's glyph has no player yet, so `UpdateGlyph` is only called once
+  `input` is set). `ControllerHelper.GetLastActiveController()` is not AOT-compiled
+  in this build (throws `ExecutionEngineException`), hence the game's flag.
+  Reported as `evidence_buttons` (*Evidence Buttons* in the Mod tab).
 - **Text log line restore (FR-UI-19).** Super Text Mesh's `rememberReadPosition`
   (the original mod's fix) has no effect in this build. While the log is open, the
   dialogue text is rebuilt and a fully revealed line is drawn unrevealed. The
@@ -166,7 +188,7 @@ Loading sequence:
   - builds a tab prefab once per session from the Gameplay tab below the same
     holder (`LTM Mod Tab`: header, seven `Double Dropdown` rows, a note) and
     registers it in a grown `tabs` array (`System.Array` methods, so element
-    writes go through the runtime). `SettingsTab.allSettings` lists the thirteen items;
+    writes go through the runtime). `SettingsTab.allSettings` lists the fourteen items;
   - keeps the game's `CustomSettingDropdown` on each item (it opens the list and
     does the navigation) but skips its `Start`, `ResetSelectedOption` and
     `OnDropdownOption(int)` for objects named `LTM …` (hooks that don't call the
@@ -237,6 +259,7 @@ pause_when_unfocused = true
 save_menu = true
 gamepad_navigation = true
 selection_border = true
+evidence_buttons = true
 ```
 
 Missing, malformed or out-of-range values fall back to the default and are logged

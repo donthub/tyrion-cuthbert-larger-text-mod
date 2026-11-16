@@ -53,6 +53,7 @@ FEATURES = (
     ("save_menu", "Save/Load menu: YYYY-MM-DD HH:mm dates, newest save marked (latest)"),
     ("gamepad_navigation", "Controller navigation stays in the open menu, wraps in lists and the evidence grid"),
     ("selection_border", "Gold border on the selected save slot, evidence item and popup button"),
+    ("evidence_buttons", "Evidence menu with a controller: Y presents, LB/RB switch Clues/Spells/People"),
 )
 FEATURE_KEYS = tuple(key for key, _ in FEATURES)
 

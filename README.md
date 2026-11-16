@@ -11,6 +11,7 @@ Makes the game's text easier to read on small screens such as the Steam Deck:
 - **Save/Load menu:** dates are shown as `YYYY-MM-DD HH:mm` (24-hour), and the most recently saved slot is named *Save #N (latest)*, with "(latest)" in gold italics.
 - **Pause when unfocused:** the game no longer reacts to input while another window has focus.
 - **Controller navigation (fixes a bug of the game):** moving the selection in a menu stays on that menu's visible buttons and wraps around within it, instead of jumping to hidden buttons behind it, where the highlight disappeared. The Save/Load slots (empty ones too) and the evidence items (as a grid, by row and column) wrap around. Switch: *Navigation* in the Mod tab.
+- **Evidence menu with a controller:** Y presents the selected evidence (instead of RB), and the button icon shows Y. LB and RB switch between Clues, Spells and People (wrapping around). Keyboard and mouse are unchanged. Switch: *Evidence Buttons* in the Mod tab.
 - **In-game settings:** a *Mod* tab in the game's Settings menu, after *Workshop*, to change the mod's settings.
 
 Text that would not fit its box at the larger size (a very long line, name or description) is scaled down just enough to fit, but never below the game's own size.
@@ -77,6 +78,7 @@ pause_when_unfocused = true   ; ignore input while the game is in the background
 save_menu = true              ; Save/Load menu: ISO dates, "(latest)" marker
 gamepad_navigation = true     ; controller navigation fixes (Navigation in the Mod tab)
 selection_border = true       ; gold border on the selection (Selection Border in the Mod tab)
+evidence_buttons = true       ; evidence menu: Y presents, LB/RB switch tabs (Evidence Buttons in the Mod tab)
 ```
 
 Invalid or missing values fall back to their defaults (with a warning in the log). A broken config never stops the game from starting. Set `debug = true` under `[general]` for a more detailed log.

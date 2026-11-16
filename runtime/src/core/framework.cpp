@@ -53,6 +53,10 @@ Runtime::Runtime(const Settings &settings, Log &log, std::vector<std::unique_ptr
     Slot border;
     border.key = border.config_key = kSelectionBorder;
     slots_.push_back(std::move(border));
+    // Controller buttons of the evidence menu (FR-UI-53), handled by the engine side.
+    Slot buttons;
+    buttons.key = buttons.config_key = "evidence_buttons";
+    slots_.push_back(std::move(buttons));
     for (Slot &slot : slots_) {
         if (slot.unit && slot.unit->always_on()) continue;
         if (!settings_.enabled || !settings_.feature(slot.config_key)) slot.state = UnitState::Disabled;

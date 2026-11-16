@@ -117,13 +117,29 @@ void guarded(F &&f) {
 // --- hooks --------------------------------------------------------------------
 
 // Detour shapes, by managed signature. IL2CPP passes the MethodInfo last.
-enum class Shape { Instance0, InstanceStr1, InstanceRet0, InstanceRetStr2, InstanceRetStr3, Static0, InstanceInt1, InstanceRetFilter0 };
+enum class Shape {
+    Instance0,
+    InstanceStr1,
+    InstanceRet0,
+    InstanceRetStr2,
+    InstanceRetStr3,
+    Static0,
+    InstanceInt1,
+    InstanceRetFilter0,
+    InstanceStrRetBool
+};
 
 using Handler = std::function<void(Object *self)>;
 // Returns true to skip the original method (and the other handlers) for `self`.
 using Skip = std::function<bool(Object *self)>;
 // Replaces a method's result (InstanceRetFilter0 only).
 using Filter = std::function<Object *(Object *self, Object *result)>;
+using String = il2cpp::String;
+// The original of a `bool Method(string)` instance method.
+using BoolOriginal = bool (*)(Object *self, String *arg, const MethodInfo *mi);
+// Replaces a `bool Method(string)` result (InstanceStrRetBool only). It runs
+// for every call, outside `guarded`: keep the common path free of engine calls.
+using BoolFilter = std::function<bool(Object *self, String *arg, bool result, BoolOriginal original, const MethodInfo *mi)>;
 
 struct Slot {
     void *target = nullptr;
@@ -132,6 +148,7 @@ struct Slot {
     std::vector<Handler> prefix, postfix;
     std::vector<Skip> skip;
     std::vector<Filter> filters;
+    std::vector<BoolFilter> bool_filters;
 };
 
 constexpr int kSlots = 24;
@@ -166,8 +183,6 @@ bool skipped(Slot &s, Object *self) {
     }
     return result;
 }
-
-using String = il2cpp::String;
 
 template <int N>
 void d_instance0(Object *self, const MethodInfo *mi) {
@@ -234,6 +249,19 @@ Object *d_instance_ret_filter0(Object *self, const MethodInfo *mi) {
     }
     return r;
 }
+template <int N>
+bool d_instance_str_ret_bool(Object *self, String *a, const MethodInfo *mi) {
+    Slot &s = g_slots[N];
+    auto original = reinterpret_cast<BoolOriginal>(s.original);
+    bool r = original(self, a, mi);
+    for (auto &f : s.bool_filters) {
+        try {
+            r = f(self, a, r, original, mi);
+        } catch (...) {
+        }
+    }
+    return r;
+}
 template <int... I>
 void *detour_for(Shape shape, int n, std::integer_sequence<int, I...>) {
     static void *const tables[][kSlots] = {
@@ -245,6 +273,7 @@ void *detour_for(Shape shape, int n, std::integer_sequence<int, I...>) {
         {reinterpret_cast<void *>(&d_static0<I>)...},
         {reinterpret_cast<void *>(&d_instance_int1<I>)...},
         {reinterpret_cast<void *>(&d_instance_ret_filter0<I>)...},
+        {reinterpret_cast<void *>(&d_instance_str_ret_bool<I>)...},
     };
     return tables[static_cast<int>(shape)][n];
 }
@@ -254,7 +283,7 @@ void *detour_for(Shape shape, int n, std::integer_sequence<int, I...>) {
 // Instance0 and InstanceInt1 hooks check it). Methods that the compiler folded
 // into one body share a slot.
 bool hook(const MethodInfo *m, Shape shape, bool prefix, Handler handler, std::string &error, Skip skip = nullptr,
-          Filter filter = nullptr) {
+          Filter filter = nullptr, BoolFilter bool_filter = nullptr) {
     void *target = engine::method_pointer(m);
     if (!target) {
         error = "method has no code";
@@ -270,6 +299,7 @@ bool hook(const MethodInfo *m, Shape shape, bool prefix, Handler handler, std::s
         if (handler) (prefix ? s.prefix : s.postfix).push_back(std::move(handler));
         if (skip) s.skip.push_back(std::move(skip));
         if (filter) s.filters.push_back(std::move(filter));
+        if (bool_filter) s.bool_filters.push_back(std::move(bool_filter));
         return true;
     }
     if (g_slot_count == kSlots) {
@@ -283,6 +313,7 @@ bool hook(const MethodInfo *m, Shape shape, bool prefix, Handler handler, std::s
     if (handler) (prefix ? s.prefix : s.postfix).push_back(std::move(handler));
     if (skip) s.skip.push_back(std::move(skip));
     if (filter) s.filters.push_back(std::move(filter));
+    if (bool_filter) s.bool_filters.push_back(std::move(bool_filter));
     void *detour = detour_for(shape, n, std::make_integer_sequence<int, kSlots>{});
     MH_STATUS st = MH_CreateHook(target, detour, &s.original);
     if (st == MH_OK) st = MH_EnableHook(target);
@@ -317,6 +348,7 @@ bool returns_as_shaped(const MethodInfo *m, Shape shape) {
     char *name = t ? il2cpp::il2cpp_type_get_name(t) : nullptr;
     bool is_void = name && std::string(name) == "System.Void";
     if (name) il2cpp::il2cpp_free(name);
+    if (shape == Shape::InstanceStrRetBool) return name && std::string(name) == "System.Boolean";
     bool ret = shape == Shape::InstanceRet0 || shape == Shape::InstanceRetStr2 || shape == Shape::InstanceRetStr3 ||
                shape == Shape::InstanceRetFilter0;
     return ret ? (t && !is_void) : is_void;
@@ -646,6 +678,8 @@ void log_versions() {
     }
 }
 
+void evidence_frame();
+
 void on_frame(Object *) {
     ++g_frames;
     if (g_frames == 1) {
@@ -655,6 +689,7 @@ void on_frame(Object *) {
         enforce_pause_when_unfocused();  // cheap; catches the game turning it back on
     }
     if (g_runtime->wants_frames()) g_runtime->on_frame(*g_ui);
+    evidence_frame();
     if (g_commands && g_frames % 30 == 0) poll_commands();
 }
 
@@ -875,6 +910,253 @@ void install_navigation() {
     g_runtime->global_applied(kNavigation);
 }
 
+
+// --- evidence menu buttons (FR-UI-53) ---------------------------------------------
+// With a controller, the evidence menu presents with Y instead of RB, and LB/RB
+// switch between its tabs (Clues, Spells, People). The game reads Present with
+// Rewired's Player.GetButtonDown("Present") (ItemMenu.ITEM_SUBMIT); while the
+// menu is open in controller mode, that query answers for the button
+// of "Text Log" (Y), so RB no longer presents. LB and RB are the buttons of
+// "Press" and "Present"; the tick reads them unfiltered and selects the
+// neighbouring tab, which loads its list (EvidenceTabButton.OnSelect). The
+// Present button's glyph (an InputGlyph) shows "Text Log"'s button. The game
+// reads none of these actions otherwise while the menu is open. Keyboard and
+// mouse are unchanged.
+
+const char *const kEvidenceButtons = "evidence_buttons";
+
+struct EvidenceButtons {
+    const MethodInfo *button_down = nullptr;  // Rewired.Player.GetButtonDown(string)
+    BoolOriginal original = nullptr;
+    String *present = nullptr, *text_log = nullptr, *press = nullptr;  // pinned
+    Class *item_menu = nullptr, *player = nullptr, *mode = nullptr, *input_glyph = nullptr, *event_system = nullptr,
+          *tab_button = nullptr;
+    il2cpp::FieldInfo *input = nullptr, *mode_instance = nullptr, *mode_active = nullptr, *current_tab = nullptr,
+                      *tab_buttons = nullptr, *tab_object = nullptr, *glyph_action = nullptr, *glyph_input = nullptr;
+    Handle menu = nullptr;        // the newest evidence menu (retained)
+    Handle glyph_menu = nullptr;  // the menu whose glyph was switched
+    bool open = false;            // open and focused this frame
+};
+EvidenceButtons g_ev;
+
+bool equals(String *s, const char *ascii) {
+    if (!s) return false;
+    int32_t n = il2cpp::il2cpp_string_length(s);
+    const char16_t *c = il2cpp::il2cpp_string_chars(s);
+    for (int32_t i = 0; i < n; ++i)
+        if (!ascii[i] || c[i] != static_cast<char16_t>(static_cast<unsigned char>(ascii[i]))) return false;
+    return ascii[n] == '\0';
+}
+
+Object *field_object(Object *o, il2cpp::FieldInfo *f) {
+    Object *v = nullptr;
+    il2cpp::il2cpp_field_get_value(o, f, &v);
+    return v;
+}
+
+bool is_static(il2cpp::FieldInfo *f) { return (il2cpp::il2cpp_field_get_flags(f) & 0x10) != 0; }
+
+// Whether the game is in controller mode (UIBase.ControllerModeHandler, which
+// also switches the buttons between text and controller glyphs). Reads fields
+// only, so the input filter can call it.
+bool controller_mode() {
+    bool active = false;
+    if (is_static(g_ev.mode_active)) {
+        il2cpp::il2cpp_field_static_get_value(g_ev.mode_active, &active);
+        return active;
+    }
+    Object *handler = nullptr;
+    il2cpp::il2cpp_field_static_get_value(g_ev.mode_instance, &handler);
+    if (!handler) return false;
+    il2cpp::il2cpp_field_get_value(handler, g_ev.mode_active, &active);
+    return active;
+}
+
+bool is_below(Handle go, Handle root) {
+    for (Handle h = go; h; h = g_ui->parent(h))
+        if (h == root) return true;
+    return false;
+}
+
+// The InputGlyph of the Present button shows the button that now presents.
+void switch_present_glyph(Handle menu) {
+    Handle icon = g_ui->find(menu, "Present Button/Controller/Icon");
+    if (!icon) throw Mismatch("evidence menu has no Present button glyph");
+    Object *glyph = invoke(method(g_classes->GameObject, "GetComponent", 1, {"System.Type"}), icon,
+                           {engine::type_object(g_ev.input_glyph)});
+    if (!glyph) throw Mismatch("Present button glyph is no InputGlyph");
+    String *action = nullptr;
+    il2cpp::il2cpp_field_get_value(glyph, g_ev.glyph_action, &action);
+    if (!equals(action, "Present")) throw Mismatch("Present button glyph shows '" + engine::to_utf8(action) + "'");
+    il2cpp::il2cpp_field_set_value(glyph, g_ev.glyph_action, g_ev.text_log);
+    // An inactive button's glyph isn't set up yet (no player); its Start draws
+    // the new action. One already set up is redrawn now.
+    if (field_object(glyph, g_ev.glyph_input)) invoke(method(g_ev.input_glyph, "UpdateGlyph", 0), glyph);
+}
+
+// Selects the tab `step` places from the current one, wrapping around. With an
+// item selected, the first item of the new tab is selected afterwards.
+void switch_tab(Handle menu, Object *item_menu, Handle selected, int step) {
+    Handle tabs = g_ui->find(menu, "Tabs");
+    if (!tabs) throw Mismatch("evidence menu has no Tabs");
+    std::vector<Handle> list;
+    for (int i = 0; i < g_ui->child_count(tabs); ++i) {
+        Handle t = g_ui->child(tabs, i);
+        if (g_ui->active_self(t) && g_ui->has(t, Comp::Button)) list.push_back(t);
+    }
+    if (list.size() < 2) return;
+    // ItemMenu.tabButtons[currentTab].gameObj is the open tab.
+    int32_t index = 0;
+    il2cpp::il2cpp_field_get_value(item_menu, g_ev.current_tab, &index);
+    Object *array = field_object(item_menu, g_ev.tab_buttons);
+    if (!array) throw Mismatch("evidence menu has no tab list");
+    auto *raw = reinterpret_cast<uint8_t *>(array);
+    size_t count = *reinterpret_cast<uintptr_t *>(raw + 3 * sizeof(void *));
+    if (index < 0 || static_cast<size_t>(index) >= count) throw Mismatch("evidence menu's current tab is out of range");
+    Object *entry = reinterpret_cast<Object **>(raw + 4 * sizeof(void *))[index];
+    Handle current = entry ? field_object(entry, g_ev.tab_object) : nullptr;
+    auto at = std::find(list.begin(), list.end(), current);
+    if (at == list.end()) throw Mismatch("evidence menu's current tab is not shown");
+    int n = static_cast<int>(list.size());
+    int next = nav::step_wrapping(static_cast<int>(at - list.begin()), n, step > 0);
+    if (next < 0) return;
+    Handle target = list[static_cast<size_t>(next)];
+    bool on_item = g_ui->parent(selected) != tabs;
+    Object *system = invoke(method(g_ev.event_system, "get_current", 0), nullptr);
+    if (!system) return;
+    const MethodInfo *select = method(g_ev.event_system, "SetSelectedGameObject", 1, {"UnityEngine.GameObject"});
+    invoke(select, system, {target});
+    g_log.write(Level::Debug, "evidence buttons: tab " + g_ui->name(target));
+    if (!on_item) return;
+    Handle grid = g_ui->find(menu, "Container/Left/Scroll View/Viewport/Content");
+    for (int i = 0; grid && i < g_ui->child_count(grid); ++i) {
+        Handle item = g_ui->child(grid, i);
+        if (g_ui->active_self(item) && g_ui->has(item, Comp::Button)) {
+            invoke(select, system, {item});
+            return;
+        }
+    }
+}
+
+void evidence_frame() {
+    g_ev.open = false;
+    if (!g_ev.menu || !g_runtime->global_enabled(kEvidenceButtons)) return;
+    try {
+        Handle menu = g_ev.menu;
+        if (!g_ui->alive(menu)) {
+            g_ui->release(menu);
+            g_ev.menu = g_ev.glyph_menu = nullptr;
+            return;
+        }
+        if (g_ev.glyph_menu != menu) {
+            g_ev.glyph_menu = menu;
+            switch_present_glyph(menu);
+        }
+        if (!g_ui->active_in_hierarchy(menu)) return;
+        // Only while the menu has the focus (no popup or other menu on top).
+        Handle selected = g_ui->selected();
+        if (!selected || !is_below(selected, menu)) return;
+        g_ev.open = true;
+        Object *item_menu = invoke(method(g_classes->GameObject, "GetComponent", 1, {"System.Type"}), menu,
+                                   {engine::type_object(g_ev.item_menu)});
+        Object *player = item_menu ? field_object(item_menu, g_ev.input) : nullptr;
+        if (!player || !controller_mode()) return;
+        // Not while a picture is viewed full screen.
+        Handle viewer = g_ui->find(menu, "Image Display");
+        if (viewer && g_ui->active_self(viewer)) return;
+        bool left = g_ev.original(player, g_ev.press, g_ev.button_down);
+        bool right = g_ev.original(player, g_ev.present, g_ev.button_down);
+        if (left != right) switch_tab(menu, item_menu, selected, left ? -1 : 1);
+    } catch (const std::exception &e) {
+        g_ev.open = false;
+        g_runtime->global_failed(kEvidenceButtons, e.what());
+    }
+}
+
+// The game's Present query, while the menu is open with a controller.
+bool filter_button_down(Object *self, String *action, bool result, BoolOriginal original, const MethodInfo *mi) {
+    if (!g_ev.open || !equals(action, "Present")) return result;
+    return controller_mode() ? original(self, g_ev.text_log, mi) : result;
+}
+
+String *pinned_string(const char *s) {
+    String *str = engine::to_string(s);
+    il2cpp::il2cpp_gchandle_new(reinterpret_cast<Object *>(str), false);  // kept for the session
+    return str;
+}
+
+void install_evidence_buttons() {
+    if (!g_runtime->global_enabled(kEvidenceButtons)) return;
+    auto fail = [](const std::string &reason) { g_runtime->global_failed(kEvidenceButtons, reason); };
+    EvidenceButtons &e = g_ev;
+    e.item_menu = engine::find_class("Courtroom", "ItemMenu");
+    e.player = engine::find_class("Rewired", "Player");
+    e.mode = engine::find_class("UIBase", "ControllerModeHandler");
+    e.input_glyph = engine::find_class("UIBase", "InputGlyph");
+    e.event_system = engine::find_class("UnityEngine.EventSystems", "EventSystem");
+    e.tab_button = engine::find_class("Courtroom", "ItemTabButton");
+    if (!e.item_menu || !e.player || !e.mode || !e.input_glyph || !e.event_system || !e.tab_button) {
+        fail("a game or Rewired class is missing");
+        return;
+    }
+    auto field = [](Class *k, const char *name) { return il2cpp::il2cpp_class_get_field_from_name(k, name); };
+    e.input = field(e.item_menu, "input");
+    e.current_tab = field(e.item_menu, "currentTab");
+    e.tab_buttons = field(e.item_menu, "tabButtons");
+    e.tab_object = field(e.tab_button, "gameObj");
+    e.mode_instance = field(e.mode, "instance");
+    e.mode_active = field(e.mode, "controllerActive");
+    e.glyph_action = field(e.input_glyph, "actionName");
+    e.glyph_input = field(e.input_glyph, "input");
+    // controllerActive is read from the static `instance`, unless it is static itself.
+    bool mode_ok = e.mode_active && (is_static(e.mode_active) || (e.mode_instance && is_static(e.mode_instance)));
+    if (!e.input || !e.current_tab || !e.tab_buttons || !e.tab_object || !mode_ok || !e.glyph_action || !e.glyph_input) {
+        fail("a field the feature reads is missing");
+        return;
+    }
+    e.button_down = engine::find_method(e.player, "GetButtonDown", 1, {"System.String"});
+    const MethodInfo *update_glyph = engine::find_method(e.input_glyph, "UpdateGlyph", 0);
+    const MethodInfo *awake = engine::find_method(e.item_menu, "Awake", 0);
+    if (!e.button_down || !update_glyph || !awake ||
+        !engine::find_method(e.event_system, "SetSelectedGameObject", 1, {"UnityEngine.GameObject"})) {
+        fail("a method the feature calls is missing");
+        return;
+    }
+    if (!returns_as_shaped(e.button_down, Shape::InstanceStrRetBool)) {
+        fail("Player.GetButtonDown has an unexpected return type");
+        return;
+    }
+    e.present = pinned_string("Present");
+    e.text_log = pinned_string("Text Log");
+    e.press = pinned_string("Press");
+    std::string error;
+    // Remember the newest evidence menu.
+    Handler track = [](Object *self) {
+        if (!self || !engine::is_a(self, g_ev.item_menu)) return;
+        Handle go = g_ui->game_object_of(self);
+        if (!go || go == g_ev.menu) return;
+        if (g_ev.menu) g_ui->release(g_ev.menu);
+        g_ui->retain(go);
+        g_ev.menu = go;
+    };
+    if (!hook(awake, Shape::Instance0, false, track, error)) {
+        fail("ItemMenu.Awake: " + error);
+        return;
+    }
+    if (!hook(e.button_down, Shape::InstanceStrRetBool, false, nullptr, error, nullptr, nullptr, filter_button_down)) {
+        fail("Player.GetButtonDown: " + error);
+        return;
+    }
+    void *target = engine::method_pointer(e.button_down);
+    for (int i = 0; i < g_slot_count; ++i)
+        if (g_slots[i].target == target) e.original = reinterpret_cast<BoolOriginal>(g_slots[i].original);
+    if (!e.original) {
+        fail("Player.GetButtonDown: no original");
+        return;
+    }
+    g_runtime->global_applied(kEvidenceButtons);
+}
+
 // --- config file (written by the in-game settings tab) ---------------------------
 
 class FileStore : public ConfigStore {
@@ -968,6 +1250,7 @@ void install(bool all) {
         g_log.write(Level::Warn, "settings tab: " + skip_reason);
     }
     if (all) install_navigation();
+    if (all) install_evidence_buttons();
     for (int t = 0; t < kTargetCount; ++t) {
         if (!hooked[t]) g_runtime->target_unavailable(static_cast<Target>(t), "no hook point: " + reasons[t]);
     }

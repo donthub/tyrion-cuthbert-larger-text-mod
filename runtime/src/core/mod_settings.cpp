@@ -21,6 +21,7 @@ const std::vector<ModControl> &mod_controls() {
         {"save_menu", "Save Menu"},
         {"gamepad_navigation", "Navigation"},
         {"selection_border", "Selection Border"},
+        {"evidence_buttons", "Evidence Buttons"},
     };
     return controls;
 }

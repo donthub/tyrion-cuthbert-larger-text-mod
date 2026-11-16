@@ -1017,6 +1017,15 @@ TEST(global_feature_reporting) {
     off_rt.report_disabled();
     CHECK(!off_rt.global_enabled("gamepad_navigation"));
     CHECK(off_log.has("FEATURE gamepad_navigation disabled"));
+    // The evidence menu's controller buttons: likewise.
+    CHECK(rt.global_enabled("evidence_buttons"));
+    CHECK(off_rt.global_enabled("evidence_buttons"));
+    off.features["evidence_buttons"] = false;
+    MemLog buttons_log;
+    Runtime buttons_rt(off, buttons_log);
+    buttons_rt.report_disabled();
+    CHECK(!buttons_rt.global_enabled("evidence_buttons"));
+    CHECK(buttons_log.has("FEATURE evidence_buttons disabled"));
 }
 
 // --- config writing (in-game settings) -----------------------------------------
@@ -1182,13 +1191,15 @@ TEST(settings_tab_added_after_workshop_once) {
     auto tabs = ui.settings_tabs(menu);
     CHECK(tabs.size() == 3 && tabs.back() == "LTM Mod");
 
-    // The template: header, seven rows of two (the last one alone), the note;
+    // The template: header, seven rows of two, the note;
     // every setting navigable.
     Node *tmpl = ui.N(ui.settings_tab_prefab(menu, "LTM Mod"));
     CHECK(ui.find(tmpl, "Tab Header") && ui.N(ui.find(tmpl, "Tab Header"))->text == "Mod");
     CHECK(!ui.N(ui.find(tmpl, "Tab Header"))->comps.count(Comp::LocalizedText));
     CHECK(ui.child_count(tmpl) == 9);
-    CHECK(ui.child_count(ui.find(tmpl, "LTM Row 7")) == 1 && ui.find(tmpl, "LTM Row 7/LTM selection_border"));
+    CHECK(ui.child_count(ui.find(tmpl, "LTM Row 7")) == 2 && ui.find(tmpl, "LTM Row 7/LTM selection_border"));
+    Node *evidence = ui.N(ui.find(tmpl, "LTM Row 7/LTM evidence_buttons"));
+    CHECK(evidence && ui.N(ui.find(evidence, "Title"))->text == "Evidence Buttons");
     CHECK(ui.child_count(ui.find(tmpl, "LTM Row 6")) == 2 && ui.find(tmpl, "LTM Row 6/LTM save_menu"));
     Node *navigation = ui.N(ui.find(tmpl, "LTM Row 6/LTM gamepad_navigation"));
     CHECK(navigation && ui.N(ui.find(navigation, "Title"))->text == "Navigation");
